@@ -7,9 +7,9 @@
 <a name="english"></a>
 ## English
 
-**WebratRemovalTool** (`salat_killer`) is a standalone, single-file incident response and malware eradication utility written in C++17 for Windows. It is specifically engineered to detect, terminate, shred, and completely eradicate **WebRAT** (also known in the wild as *Nursultan*, *Salat Stealer*, or *TON Clipper*).
+**WebratRemovalTool** (`webrat_killer`) is a standalone, single-file incident response and malware eradication utility written in C++17 for Windows. It is specifically engineered to detect, terminate, shred, and completely eradicate **WebRAT** (Go-based info-stealer and crypto-clipper).
 
-### Threat Profile (WebRAT / Nursultan)
+### Threat Profile (WebRAT)
 WebRAT is a modular stealer and clipboard hijacker compiled with the Go runtime (typically 32-bit PE / WOW64). Its primary malicious capabilities include:
 * **Cryptocurrency Clipper:** Real-time clipboard hijacking targeting TON, BTC, ETH, and other cryptocurrency addresses (`main.decodeFromTonAddress`).
 * **Credential & Session Theft:** Extraction of Chromium v20+ credentials with App-Bound Encryption bypass (`main.GetAppBoundKey`), Discord tokens, Telegram session files, and browser cookies.
@@ -62,7 +62,7 @@ x86_64-w64-mingw32-windres res.rc -O coff -o res.o
 # 2. Build static standalone executable:
 x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o \
   -ladvapi32 -lshell32 -lole32 -loleaut32 -municode -static \
-  -o salat_killer.exe
+  -o webrat_killer.exe
 ```
 
 ---
@@ -73,14 +73,14 @@ Run as **Administrator**:
 
 ```cmd
 :: Standard interactive scan & cleanup (holds console on completion):
-salat_killer.exe
+webrat_killer.exe
 
 :: Scan only / Dry-Run (displays detections without modifying system):
-salat_killer.exe -s
-salat_killer.exe --scan
+webrat_killer.exe -s
+webrat_killer.exe --scan
 
 :: Batch automation mode (exits without prompt upon completion):
-salat_killer.exe -b
+webrat_killer.exe -b
 ```
 
 ---
@@ -88,9 +88,9 @@ salat_killer.exe -b
 <a name="russian"></a>
 ## Русский
 
-**WebratRemovalTool** (`salat_killer`) — это автономная утилита для реагирования на инциденты (Incident Response) и полного удаления вредоносного ПО, написанная на C++17 под Windows. Специально разработана для обнаружения, нейтрализации, уничтожения и вычищения **WebRAT** (в сети также известен как *Nursultan*, *Salat Stealer* или *TON Clipper*).
+**WebratRemovalTool** (`webrat_killer`) — это автономная утилита для реагирования на инциденты (Incident Response) и полного удаления вредоносного ПО, написанная на C++17 под Windows. Специально разработана для обнаружения, нейтрализации, уничтожения и вычищения **WebRAT** (Go-стилер и крипто-клиппер).
 
-### Профиль угрозы (WebRAT / Nursultan)
+### Профиль угрозы (WebRAT)
 WebRAT — модульный стилер и клиппер, написанный на Go (как правило, 32-битный PE / WOW64). Основные возможности зловреда:
 * **Крипто-клиппер:** Подмена адресов кошельков в буфере обмена (TON, BTC, ETH и др.) в реальном времени (`main.decodeFromTonAddress`).
 * **Кража учетных данных:** Обход защиты Chromium v20+ App-Bound Encryption (`main.GetAppBoundKey`), кража сессий Telegram, токенов Discord и браузерных паролей/куков.
@@ -139,7 +139,7 @@ x86_64-w64-mingw32-windres res.rc -O coff -o res.o
 # 2. Сборка статического бинарника:
 x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o \
   -ladvapi32 -lshell32 -lole32 -loleaut32 -municode -static \
-  -o salat_killer.exe
+  -o webrat_killer.exe
 ```
 
 ---
@@ -150,14 +150,14 @@ x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o \
 
 ```cmd
 :: Обычный интерактивный режим (сканирование, удаление, ожидание нажатия клавиши):
-salat_killer.exe
+webrat_killer.exe
 
 :: Только сканирование без изменений (Dry-run):
-salat_killer.exe -s
-salat_killer.exe --scan
+webrat_killer.exe -s
+webrat_killer.exe --scan
 
 :: Пакетный режим для автоматизации (без ожидания клавиши при выходе):
-salat_killer.exe -b
+webrat_killer.exe -b
 ```
 
 ---
