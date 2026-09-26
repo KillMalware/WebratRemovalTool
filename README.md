@@ -9,6 +9,10 @@
 
 **WebratRemovalTool** (`webrat_killer`) is a standalone, single-file incident response and malware eradication utility written in C++17 for Windows. It is specifically engineered to detect, terminate, shred, and completely eradicate **WebRAT** (Go-based info-stealer and crypto-clipper).
 
+### 📥 Download Pre-Compiled Binary
+* **Direct Binary (Git Tree):** [`bin/webrat_killer.exe`](https://github.com/KillMalware/WebratRemovalTool/raw/main/bin/webrat_killer.exe)
+* **GitHub Releases:** [Download Latest Release v1.0.0](https://github.com/KillMalware/WebratRemovalTool/releases/latest)
+
 ### Threat Profile (WebRAT)
 WebRAT is a modular stealer and clipboard hijacker compiled with the Go runtime (typically 32-bit PE / WOW64). Its primary malicious capabilities include:
 * **Cryptocurrency Clipper:** Real-time clipboard hijacking targeting TON, BTC, ETH, and other cryptocurrency addresses (`main.decodeFromTonAddress`).
@@ -89,6 +93,10 @@ webrat_killer.exe -b
 ## Русский
 
 **WebratRemovalTool** (`webrat_killer`) — это автономная утилита для реагирования на инциденты (Incident Response) и полного удаления вредоносного ПО, написанная на C++17 под Windows. Специально разработана для обнаружения, нейтрализации, уничтожения и вычищения **WebRAT** (Go-стилер и крипто-клиппер).
+
+### 📥 Скачать готовый бинарник
+* **Прямая ссылка (из репозитория):** [`bin/webrat_killer.exe`](https://github.com/KillMalware/WebratRemovalTool/raw/main/bin/webrat_killer.exe)
+* **Релизы на GitHub:** [Скачать последний релиз v1.0.0](https://github.com/KillMalware/WebratRemovalTool/releases/latest)
 
 ### Профиль угрозы (WebRAT)
 WebRAT — модульный стилер и клиппер, написанный на Go (как правило, 32-битный PE / WOW64). Основные возможности зловреда:
