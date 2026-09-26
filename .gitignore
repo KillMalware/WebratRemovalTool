@@ -1,0 +1,9 @@
+# Build artifacts
+*.o
+*.exe
+*.dll
+*.log
+
+# Test samples & temporary files
+scriptnursultan*
+*.bin
