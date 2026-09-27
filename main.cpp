@@ -3,6 +3,7 @@
 #include <tlhelp32.h>
 #include <initguid.h>
 #include <taskschd.h>
+#include <shlobj.h>
 #include <comdef.h>
 #include <conio.h>
 #include <iostream>
@@ -10,6 +11,7 @@
 #include <string>
 #include <algorithm>
 #include <cstdint>
+#include <set>
 
 struct com_scope {
     HRESULT hr;
@@ -19,13 +21,13 @@ struct com_scope {
 };
 
 static const std::vector<uint8_t> SIG_STORE[] = {
-    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x3e, 0x3f, 0x39, 0x35, 0x3e, 0x3f, 0x1c, 0x28, 0x35, 0x37, 0x0e, 0x35, 0x34, 0x1b, 0x3e, 0x3e, 0x28, 0x3f, 0x29, 0x29}, // ton clipper
-    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x1d, 0x3f, 0x2e, 0x1b, 0x2a, 0x2a, 0x18, 0x35, 0x2f, 0x34, 0x3e, 0x11, 0x3f, 0x23}, // appbound key
-    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x29, 0x2e, 0x3b, 0x2e, 0x33, 0x39, 0x33, 0x34, 0x29, 0x2e, 0x3b, 0x36, 0x36}, // persistence install
-    {0x38, 0x33, 0x38, 0x3b, 0x2d, 0x33, 0x34, 0x2c}, // drop tag
-    {0xff, 0xfd, 0xff, 0xff}, // c2 config header
-    {0xe3, 0x23, 0x6d, 0xc4}, // tea decryptor
-    {0x0f, 0x0a, 0x02, 0x7b, 0x57, 0x53, 0x54, 0x50, 0x2b, 0x52, 0x4b, 0x27}  // upx packed header
+    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x3e, 0x3f, 0x39, 0x35, 0x3e, 0x3f, 0x1c, 0x28, 0x35, 0x37, 0x0e, 0x35, 0x34, 0x1b, 0x3e, 0x3e, 0x28, 0x3f, 0x29, 0x29}, // ton clipper (25 bytes)
+    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x1d, 0x3f, 0x2e, 0x1b, 0x2a, 0x2a, 0x18, 0x35, 0x2f, 0x34, 0x3e, 0x11, 0x3f, 0x23}, // appbound key (19 bytes)
+    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x29, 0x2e, 0x3b, 0x2e, 0x33, 0x39, 0x33, 0x34, 0x29, 0x2e, 0x3b, 0x36, 0x36}, // persistence install (18 bytes)
+    {0x38, 0x33, 0x38, 0x3b, 0x2d, 0x33, 0x34, 0x2c}, // drop tag / binary (8 bytes)
+    {0x3d, 0x33, 0x2e, 0x32, 0x2f, 0x38, 0x74, 0x39, 0x35, 0x37, 0x75, 0x22, 0x29, 0x29, 0x34, 0x33, 0x39, 0x31, 0x75, 0x2e, 0x35, 0x34, 0x2f, 0x2e, 0x33, 0x36, 0x29, 0x77, 0x3d, 0x35}, // tonutils-go (30 bytes)
+    {0x3d, 0x33, 0x2e, 0x32, 0x2f, 0x38, 0x74, 0x39, 0x35, 0x37, 0x75, 0x28, 0x35, 0x3e, 0x35, 0x36, 0x3c, 0x35, 0x3b, 0x3d, 0x75, 0x3d, 0x35, 0x2d, 0x69, 0x68, 0x74, 0x19, 0x28, 0x3f, 0x3b, 0x2e, 0x3f, 0x17, 0x2f, 0x2e, 0x3f, 0x22}, // gow32.CreateMutex (38 bytes)
+    {0x0f, 0x0a, 0x02, 0x7b, 0x57, 0x53, 0x54, 0x50, 0x2b, 0x52, 0x4b, 0x27}  // upx packed header (12 bytes)
 };
 
 constexpr size_t CARRY_SIZE = 128;
@@ -77,39 +79,134 @@ static bool set_privilege(const wchar_t* priv) {
     return res && (GetLastError() == ERROR_SUCCESS);
 }
 
+static std::wstring to_lower(std::wstring str) {
+    std::transform(str.begin(), str.end(), str.begin(), ::towlower);
+    return str;
+}
+
 static bool starts_with_path(const std::wstring& path, const std::wstring& base) {
     if (path.size() < base.size()) return false;
     if (path.compare(0, base.size(), base) != 0) return false;
     return path.size() == base.size() || path[base.size()] == L'\\';
 }
 
-static bool is_trusted_location(const std::wstring& path) {
-    std::wstring p = path;
-    std::transform(p.begin(), p.end(), p.begin(), ::towlower);
-
-    static const wchar_t* WRITABLE[] = {
-        L"\\temp\\", L"\\tmp\\", L"\\tasks\\", L"\\tracing\\", L"\\users\\"
-    };
-    for (const auto* d : WRITABLE) {
-        if (p.find(d) != std::wstring::npos) return false;
+static bool is_system_trusted_binary(const std::wstring& path) {
+    std::wstring p = to_lower(path);
+    if (p.find(L"msmpeng.exe") != std::wstring::npos ||
+        p.find(L"mpdefenderservice") != std::wstring::npos ||
+        p.find(L"mpdefendercore") != std::wstring::npos ||
+        p.find(L"securityhealthservice") != std::wstring::npos ||
+        p.find(L"onedrive.exe") != std::wstring::npos ||
+        p.find(L"onedrive.sync") != std::wstring::npos ||
+        p.find(L"\\windows defender\\") != std::wstring::npos ||
+        p.find(L"\\microsoft\\onedrive\\") != std::wstring::npos ||
+        p.find(L"\\microsoft\\edge\\") != std::wstring::npos) {
+        return true;
     }
+    return false;
+}
+
+static bool is_trusted_location(const std::wstring& path) {
+    if (is_system_trusted_binary(path)) return true;
+
+    std::wstring p = to_lower(path);
 
     wchar_t buf[MAX_PATH];
     if (GetWindowsDirectoryW(buf, MAX_PATH)) {
-        std::wstring w = buf;
-        std::transform(w.begin(), w.end(), w.begin(), ::towlower);
-        if (starts_with_path(p, w)) return true;
+        std::wstring w = to_lower(buf);
+        if (starts_with_path(p, w)) {
+            if (p.find(L"\\temp\\") == std::wstring::npos &&
+                p.find(L"\\tasks\\") == std::wstring::npos &&
+                p.find(L"\\tracing\\") == std::wstring::npos) {
+                return true;
+            }
+        }
     }
+
     if (GetEnvironmentVariableW(L"ProgramFiles", buf, MAX_PATH)) {
-        std::wstring pf = buf;
-        std::transform(pf.begin(), pf.end(), pf.begin(), ::towlower);
+        std::wstring pf = to_lower(buf);
         if (starts_with_path(p, pf)) return true;
     }
     if (GetEnvironmentVariableW(L"ProgramFiles(x86)", buf, MAX_PATH)) {
-        std::wstring pf86 = buf;
-        std::transform(pf86.begin(), pf86.end(), pf86.begin(), ::towlower);
+        std::wstring pf86 = to_lower(buf);
         if (starts_with_path(p, pf86)) return true;
     }
+
+    return false;
+}
+
+static bool is_known_threat_keyword(const std::wstring& str) {
+    std::wstring s = to_lower(str);
+    if (s.find(L"bibawinv") != std::wstring::npos ||
+        s.find(L"salat") != std::wstring::npos ||
+        s.find(L"webrat") != std::wstring::npos ||
+        s.find(L"scriptnursultan") != std::wstring::npos) {
+        return true;
+    }
+    return false;
+}
+
+static std::wstring extract_executable_path(const std::wstring& cmd) {
+    if (cmd.empty()) return L"";
+
+    wchar_t expanded[8192];
+    DWORD expLen = ExpandEnvironmentStringsW(cmd.c_str(), expanded, 8192);
+    std::wstring s = (expLen > 0 && expLen < 8192) ? expanded : cmd;
+
+    size_t start = s.find_first_not_of(L" \t\r\n");
+    if (start == std::wstring::npos) return L"";
+    s = s.substr(start);
+
+    std::wstring exePath;
+    if (s.front() == L'\"') {
+        size_t closeQuote = s.find(L'\"', 1);
+        if (closeQuote != std::wstring::npos) {
+            exePath = s.substr(1, closeQuote - 1);
+        } else {
+            exePath = s.substr(1);
+        }
+    } else {
+        size_t space = s.find(L' ');
+        if (space == std::wstring::npos) {
+            exePath = s;
+        } else {
+            std::wstring cand = s.substr(0, space);
+            if (GetFileAttributesW(cand.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                exePath = cand;
+            } else {
+                size_t exePos = to_lower(s).find(L".exe");
+                if (exePos != std::wstring::npos) {
+                    exePath = s.substr(0, exePos + 4);
+                } else {
+                    exePath = cand;
+                }
+            }
+        }
+    }
+
+    wchar_t longPath[8192];
+    DWORD longLen = GetLongPathNameW(exePath.c_str(), longPath, 8192);
+    if (longLen > 0 && longLen < 8192) {
+        exePath = longPath;
+    }
+
+    return exePath;
+}
+
+static bool paths_match(const std::wstring& p1, const std::wstring& p2) {
+    if (p1.empty() || p2.empty()) return false;
+    if (_wcsicmp(p1.c_str(), p2.c_str()) == 0) return true;
+
+    std::wstring l1 = to_lower(p1);
+    std::wstring l2 = to_lower(p2);
+    if (l1.find(l2) != std::wstring::npos || l2.find(l1) != std::wstring::npos)
+        return true;
+
+    size_t pos1 = l1.find_last_of(L"\\/");
+    size_t pos2 = l2.find_last_of(L"\\/");
+    std::wstring fn1 = (pos1 != std::wstring::npos) ? l1.substr(pos1 + 1) : l1;
+    std::wstring fn2 = (pos2 != std::wstring::npos) ? l2.substr(pos2 + 1) : l2;
+    if (!fn1.empty() && fn1 == fn2) return true;
 
     return false;
 }
@@ -125,6 +222,8 @@ static bool has_pattern(const uint8_t* buf, size_t bufLen, const uint8_t* pat, s
 }
 
 static bool scan_file(const std::wstring& path, const std::vector<std::vector<uint8_t>>& sigs) {
+    if (is_system_trusted_binary(path)) return false;
+
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
@@ -160,19 +259,17 @@ static bool scan_process_memory(HANDLE proc, const std::vector<std::vector<uint8
     MEMORY_BASIC_INFORMATION mbi{};
     uint8_t* ptr = nullptr;
     std::vector<uint8_t> buffer(64 * 1024 + CARRY_SIZE);
-    size_t totalScanned = 0;
-    constexpr size_t MAX_PROC_SCAN = 64 * 1024 * 1024;
     size_t carry = 0;
     uint8_t* lastEnd = nullptr;
 
-    while (totalScanned < MAX_PROC_SCAN && VirtualQueryEx(proc, ptr, &mbi, sizeof(mbi))) {
+    while (VirtualQueryEx(proc, ptr, &mbi, sizeof(mbi))) {
         if (mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS))) {
             if ((uint8_t*)mbi.BaseAddress != lastEnd) {
                 carry = 0;
             }
 
             size_t off = 0;
-            while (off < mbi.RegionSize && totalScanned < MAX_PROC_SCAN) {
+            while (off < mbi.RegionSize) {
                 size_t req = std::min((size_t)64 * 1024, mbi.RegionSize - off);
                 SIZE_T done = 0;
 
@@ -188,7 +285,6 @@ static bool scan_process_memory(HANDLE proc, const std::vector<std::vector<uint8
                 carry = std::min(total, CARRY_SIZE);
                 memmove(buffer.data(), buffer.data() + total - carry, carry);
                 off += done;
-                totalScanned += done;
             }
             lastEnd = (uint8_t*)mbi.BaseAddress + mbi.RegionSize;
         } else {
@@ -200,35 +296,35 @@ static bool scan_process_memory(HANDLE proc, const std::vector<std::vector<uint8
     return false;
 }
 
-static bool wipe_and_delete(const std::wstring& path) {
-    SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+static void suspend_process(DWORD pid) {
+    typedef LONG(NTAPI* pfnNtSuspendProcess)(HANDLE ProcessHandle);
+    static auto NtSuspendProcess = (pfnNtSuspendProcess)(void*)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSuspendProcess");
 
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
-                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h != INVALID_HANDLE_VALUE) {
-        LARGE_INTEGER sz{};
-        if (GetFileSizeEx(h, &sz) && sz.QuadPart > 0) {
-            std::vector<uint8_t> zeroes(64 * 1024, 0);
-            LONGLONG remain = std::min(sz.QuadPart, (LONGLONG)64 * 1024 * 1024);
-            while (remain > 0) {
-                DWORD chunk = (DWORD)std::min((LONGLONG)zeroes.size(), remain);
-                DWORD written = 0;
-                if (!WriteFile(h, zeroes.data(), chunk, &written, nullptr) || written == 0)
-                    break;
-                remain -= written;
-            }
-            SetFilePointer(h, 0, nullptr, FILE_BEGIN);
-            SetEndOfFile(h);
-            FlushFileBuffers(h);
+    HANDLE h = OpenProcess(PROCESS_SUSPEND_RESUME, FALSE, pid);
+    if (h) {
+        if (NtSuspendProcess) {
+            NtSuspendProcess(h);
         }
         CloseHandle(h);
     }
 
-    if (DeleteFileW(path.c_str()))
-        return true;
-
-    return MoveFileExW(path.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te{};
+        te.dwSize = sizeof(te);
+        if (Thread32First(snap, &te)) {
+            do {
+                if (te.th32OwnerProcessID == pid) {
+                    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME, FALSE, te.th32ThreadID);
+                    if (th) {
+                        SuspendThread(th);
+                        CloseHandle(th);
+                    }
+                }
+            } while (Thread32Next(snap, &te));
+        }
+        CloseHandle(snap);
+    }
 }
 
 static void kill_process_tree(DWORD parentPid) {
@@ -248,23 +344,119 @@ static void kill_process_tree(DWORD parentPid) {
     CloseHandle(snap);
 
     for (DWORD cpid : children) {
+        suspend_process(cpid);
         kill_process_tree(cpid);
-        HANDLE child = OpenProcess(PROCESS_TERMINATE, FALSE, cpid);
+        HANDLE child = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, cpid);
         if (child) {
             TerminateProcess(child, 1);
+            WaitForSingleObject(child, 500);
             CloseHandle(child);
             std::wcout << L"killed child process: " << cpid << L"\n";
         }
     }
 }
 
-static void clean_autoruns(const std::vector<std::wstring>& targets) {
-    if (targets.empty()) return;
+static void kill_processes_by_path(const std::wstring& targetPath) {
+    if (targetPath.empty() || is_system_trusted_binary(targetPath)) return;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
 
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    DWORD selfPid = GetCurrentProcessId();
+
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (pe.th32ProcessID <= 4 || pe.th32ProcessID == selfPid) continue;
+
+            HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+            if (!proc) continue;
+
+            wchar_t imgPath[MAX_PATH * 2] = {0};
+            DWORD sz = MAX_PATH * 2;
+            std::wstring p;
+            if (QueryFullProcessImageNameW(proc, 0, imgPath, &sz)) {
+                p = imgPath;
+            }
+            CloseHandle(proc);
+
+            if (paths_match(p, targetPath) || paths_match(pe.szExeFile, targetPath)) {
+                suspend_process(pe.th32ProcessID);
+                kill_process_tree(pe.th32ProcessID);
+                HANDLE kproc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pe.th32ProcessID);
+                if (kproc) {
+                    TerminateProcess(kproc, 1);
+                    WaitForSingleObject(kproc, 1000);
+                    CloseHandle(kproc);
+                    std::wcout << L"killed process: " << pe.szExeFile << L" (pid " << pe.th32ProcessID << L")\n";
+                }
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+    CloseHandle(snap);
+}
+
+static bool wipe_and_delete(std::wstring path) {
+    if (is_system_trusted_binary(path)) return false;
+    if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return true;
+
+    SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+
+    std::wstring tempDead = path + L".dead_" + std::to_wstring(GetTickCount64());
+    if (MoveFileW(path.c_str(), tempDead.c_str())) {
+        path = tempDead;
+    }
+
+    bool shredded = false;
+    for (int retry = 0; retry < 25; ++retry) {
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                               nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            LARGE_INTEGER sz{};
+            if (GetFileSizeEx(h, &sz) && sz.QuadPart > 0) {
+                std::vector<uint8_t> zeroes(64 * 1024, 0);
+                LONGLONG remain = std::min(sz.QuadPart, (LONGLONG)64 * 1024 * 1024);
+                while (remain > 0) {
+                    DWORD chunk = (DWORD)std::min((LONGLONG)zeroes.size(), remain);
+                    DWORD written = 0;
+                    if (!WriteFile(h, zeroes.data(), chunk, &written, nullptr) || written == 0)
+                        break;
+                    remain -= written;
+                }
+                SetFilePointer(h, 0, nullptr, FILE_BEGIN);
+                SetEndOfFile(h);
+                FlushFileBuffers(h);
+            }
+            CloseHandle(h);
+            shredded = true;
+            break;
+        }
+        Sleep(100);
+    }
+
+    for (int retry = 0; retry < 10; ++retry) {
+        if (DeleteFileW(path.c_str())) return true;
+        Sleep(100);
+    }
+
+    if (MoveFileExW(path.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT))
+        return true;
+
+    return shredded;
+}
+
+static void scan_and_clean_autoruns(const std::vector<std::vector<uint8_t>>& sigs,
+                                    std::vector<std::wstring>& targets,
+                                    bool dryRun) {
     const HKEY hives[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
     const wchar_t* subkeys[] = {
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServices",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServicesOnce",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run"
     };
     const REGSAM views[] = { KEY_WOW64_64KEY, KEY_WOW64_32KEY };
 
@@ -272,7 +464,8 @@ static void clean_autoruns(const std::vector<std::wstring>& targets) {
         for (const wchar_t* subkey : subkeys) {
             for (REGSAM view : views) {
                 HKEY key = nullptr;
-                if (RegOpenKeyExW(hive, subkey, 0, KEY_READ | KEY_SET_VALUE | view, &key) == ERROR_SUCCESS) {
+                REGSAM access = KEY_READ | (dryRun ? 0 : KEY_SET_VALUE) | view;
+                if (RegOpenKeyExW(hive, subkey, 0, access, &key) == ERROR_SUCCESS) {
                     DWORD idx = 0;
                     wchar_t valName[256];
                     std::vector<BYTE> data(4096);
@@ -284,9 +477,7 @@ static void clean_autoruns(const std::vector<std::wstring>& targets) {
                         DWORD type = 0;
                         LSTATUS st = RegEnumValueW(key, idx, valName, &valLen, nullptr, &type, data.data(), &dataLen);
 
-                        if (st == ERROR_NO_MORE_ITEMS)
-                            break;
-
+                        if (st == ERROR_NO_MORE_ITEMS) break;
                         if (st == ERROR_MORE_DATA) {
                             data.resize(dataLen + 256);
                             continue;
@@ -294,28 +485,68 @@ static void clean_autoruns(const std::vector<std::wstring>& targets) {
 
                         if (st == ERROR_SUCCESS && (type == REG_SZ || type == REG_EXPAND_SZ)) {
                             size_t chars = dataLen / sizeof(wchar_t);
-                            while (chars > 0 && ((wchar_t*)data.data())[chars - 1] == L'\0')
-                                chars--;
-
+                            while (chars > 0 && ((wchar_t*)data.data())[chars - 1] == L'\0') chars--;
                             std::wstring raw((wchar_t*)data.data(), chars);
-                            std::transform(raw.begin(), raw.end(), raw.begin(), ::towlower);
 
-                            for (const auto& target : targets) {
-                                std::wstring tLower = target;
-                                std::transform(tLower.begin(), tLower.end(), tLower.begin(), ::towlower);
+                            std::wstring exe = extract_executable_path(raw);
+                            bool isMalware = false;
 
-                                if (!tLower.empty() && raw.find(tLower) != std::wstring::npos) {
-                                    toDelete.push_back(valName);
-                                    break;
+                            if (!exe.empty() && !is_system_trusted_binary(exe)) {
+                                for (const auto& t : targets) {
+                                    if (paths_match(exe, t)) {
+                                        isMalware = true;
+                                        break;
+                                    }
                                 }
+
+                                if (!isMalware && !is_trusted_location(exe)) {
+                                    if (GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                                        if (scan_file(exe, sigs)) {
+                                            isMalware = true;
+                                            if (std::find(targets.begin(), targets.end(), exe) == targets.end()) {
+                                                targets.push_back(exe);
+                                            }
+                                            std::wcout << L"found autorun threat: " << valName << L" -> " << exe << L"\n";
+                                            if (!dryRun) {
+                                                kill_processes_by_path(exe);
+                                            }
+                                        }
+                                    } else {
+                                        if (is_known_threat_keyword(exe) || is_known_threat_keyword(valName) || is_known_threat_keyword(raw)) {
+                                            isMalware = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!isMalware && !is_system_trusted_binary(valName)) {
+                                if (is_known_threat_keyword(valName) || is_known_threat_keyword(raw)) {
+                                    isMalware = true;
+                                }
+                                for (const auto& t : targets) {
+                                    if (paths_match(valName, t) || paths_match(raw, t)) {
+                                        isMalware = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (isMalware) {
+                                toDelete.push_back(valName);
                             }
                         }
                         idx++;
                     }
 
-                    for (const auto& name : toDelete) {
-                        if (RegDeleteValueW(key, name.c_str()) == ERROR_SUCCESS) {
-                            std::wcout << L"removed autorun: " << name << L"\n";
+                    if (!dryRun) {
+                        for (const auto& name : toDelete) {
+                            if (RegDeleteValueW(key, name.c_str()) == ERROR_SUCCESS) {
+                                std::wcout << L"removed autorun: " << name << L"\n";
+                            }
+                        }
+                    } else if (!toDelete.empty()) {
+                        for (const auto& name : toDelete) {
+                            std::wcout << L"[dry-run] autorun detected: " << name << L"\n";
                         }
                     }
                     RegCloseKey(key);
@@ -325,7 +556,10 @@ static void clean_autoruns(const std::vector<std::wstring>& targets) {
     }
 }
 
-static void clean_tasks_in_folder(ITaskFolder* folder, const std::vector<std::wstring>& targets) {
+static void scan_and_clean_tasks_folder(ITaskFolder* folder,
+                                        const std::vector<std::vector<uint8_t>>& sigs,
+                                        std::vector<std::wstring>& targets,
+                                        bool dryRun) {
     if (!folder) return;
 
     IRegisteredTaskCollection* tasks = nullptr;
@@ -345,9 +579,9 @@ static void clean_tasks_in_folder(ITaskFolder* folder, const std::vector<std::ws
                 if (SUCCEEDED(def->get_Actions(&acts)) && acts) {
                     LONG actCount = 0;
                     acts->get_Count(&actCount);
-                    bool taskRemoved = false;
+                    bool taskMalicious = false;
 
-                    for (LONG j = 1; j <= actCount && !taskRemoved; ++j) {
+                    for (LONG j = 1; j <= actCount && !taskMalicious; ++j) {
                         IAction* a = nullptr;
                         if (FAILED(acts->get_Item(j, &a)) || !a) continue;
 
@@ -356,28 +590,75 @@ static void clean_tasks_in_folder(ITaskFolder* folder, const std::vector<std::ws
                         if (type == TASK_ACTION_EXEC) {
                             IExecAction* exec = nullptr;
                             if (SUCCEEDED(a->QueryInterface(IID_IExecAction, (void**)&exec)) && exec) {
-                                BSTR execPath = nullptr;
-                                exec->get_Path(&execPath);
-                                if (execPath) {
-                                    std::wstring ep = execPath;
-                                    std::transform(ep.begin(), ep.end(), ep.begin(), ::towlower);
+                                BSTR ep = nullptr;
+                                exec->get_Path(&ep);
+                                BSTR args = nullptr;
+                                exec->get_Arguments(&args);
+
+                                std::wstring fullCmd = (ep ? ep : L"");
+                                if (args) {
+                                    fullCmd += L" ";
+                                    fullCmd += args;
+                                }
+
+                                std::wstring exe = extract_executable_path(fullCmd);
+
+                                if (!exe.empty() && !is_system_trusted_binary(exe)) {
                                     for (const auto& target : targets) {
-                                        std::wstring tLower = target;
-                                        std::transform(tLower.begin(), tLower.end(), tLower.begin(), ::towlower);
-                                        if (!tLower.empty() && ep.find(tLower) != std::wstring::npos) {
-                                            if (SUCCEEDED(folder->DeleteTask(name, 0))) {
-                                                std::wcout << L"removed task: " << (name ? name : L"") << L"\n";
-                                                taskRemoved = true;
-                                            }
+                                        if (paths_match(exe, target)) {
+                                            taskMalicious = true;
                                             break;
                                         }
                                     }
-                                    SysFreeString(execPath);
+
+                                    if (!taskMalicious && !is_trusted_location(exe)) {
+                                        if (GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                                            if (scan_file(exe, sigs)) {
+                                                taskMalicious = true;
+                                                if (std::find(targets.begin(), targets.end(), exe) == targets.end()) {
+                                                    targets.push_back(exe);
+                                                }
+                                                std::wcout << L"found scheduled task threat: " << (name ? name : L"") << L" -> " << exe << L"\n";
+                                                if (!dryRun) {
+                                                    kill_processes_by_path(exe);
+                                                }
+                                            }
+                                        } else {
+                                            if (is_known_threat_keyword(exe) || (name && is_known_threat_keyword(name)) || is_known_threat_keyword(fullCmd)) {
+                                                taskMalicious = true;
+                                            }
+                                        }
+                                    }
                                 }
+
+                                if (!taskMalicious && name && !is_system_trusted_binary(name)) {
+                                    if (is_known_threat_keyword(name) || is_known_threat_keyword(fullCmd)) {
+                                        taskMalicious = true;
+                                    }
+                                    for (const auto& target : targets) {
+                                        if (paths_match(name, target)) {
+                                            taskMalicious = true;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                if (ep) SysFreeString(ep);
+                                if (args) SysFreeString(args);
                                 exec->Release();
                             }
                         }
                         a->Release();
+                    }
+
+                    if (taskMalicious && name) {
+                        if (!dryRun) {
+                            if (SUCCEEDED(folder->DeleteTask(name, 0))) {
+                                std::wcout << L"removed task: " << name << L"\n";
+                            }
+                        } else {
+                            std::wcout << L"[dry-run] task detected: " << name << L"\n";
+                        }
                     }
                     acts->Release();
                 }
@@ -396,12 +677,7 @@ static void clean_tasks_in_folder(ITaskFolder* folder, const std::vector<std::ws
         for (LONG i = 1; i <= subCount; ++i) {
             ITaskFolder* sub = nullptr;
             if (SUCCEEDED(subFolders->get_Item(_variant_t(i), &sub)) && sub) {
-                BSTR folderName = nullptr;
-                sub->get_Name(&folderName);
-                if (!folderName || _wcsicmp(folderName, L"Microsoft") != 0) {
-                    clean_tasks_in_folder(sub, targets);
-                }
-                if (folderName) SysFreeString(folderName);
+                scan_and_clean_tasks_folder(sub, sigs, targets, dryRun);
                 sub->Release();
             }
         }
@@ -409,26 +685,92 @@ static void clean_tasks_in_folder(ITaskFolder* folder, const std::vector<std::ws
     }
 }
 
-static void clean_scheduled_tasks(const std::vector<std::wstring>& targets) {
-    if (targets.empty()) return;
-
+static void scan_and_clean_scheduled_tasks(const std::vector<std::vector<uint8_t>>& sigs,
+                                           std::vector<std::wstring>& targets,
+                                           bool dryRun) {
     com_scope com;
     if (!com.valid()) return;
 
     ITaskService* svc = nullptr;
-    HRESULT hr = CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER, IID_ITaskService, (void**)&svc);
-    if (FAILED(hr) || !svc) return;
+    if (FAILED(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER, IID_ITaskService, (void**)&svc)) || !svc)
+        return;
 
-    hr = svc->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t());
-    if (SUCCEEDED(hr)) {
+    if (SUCCEEDED(svc->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t()))) {
         ITaskFolder* root = nullptr;
-        hr = svc->GetFolder(_bstr_t(L"\\"), &root);
-        if (SUCCEEDED(hr) && root) {
-            clean_tasks_in_folder(root, targets);
+        if (SUCCEEDED(svc->GetFolder(_bstr_t(L"\\"), &root)) && root) {
+            scan_and_clean_tasks_folder(root, sigs, targets, dryRun);
             root->Release();
         }
     }
     svc->Release();
+}
+
+static void scan_and_clean_startup_dir(const std::wstring& dir,
+                                       const std::wstring& myPath,
+                                       const std::vector<std::vector<uint8_t>>& sigs,
+                                       std::vector<std::wstring>& targets,
+                                       bool dryRun) {
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW((dir + L"\\*").c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE) return;
+
+    do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        std::wstring full = dir + L"\\" + fd.cFileName;
+        if (_wcsicmp(full.c_str(), myPath.c_str()) == 0) continue;
+
+        std::wstring lowerName = to_lower(fd.cFileName);
+        bool isMalware = false;
+
+        if (lowerName.size() > 4 && lowerName.substr(lowerName.size() - 4) == L".lnk") {
+            com_scope com;
+            if (com.valid()) {
+                IShellLinkW* sl = nullptr;
+                if (SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_IShellLinkW, (void**)&sl))) {
+                    IPersistFile* pf = nullptr;
+                    if (SUCCEEDED(sl->QueryInterface(IID_IPersistFile, (void**)&pf))) {
+                        if (SUCCEEDED(pf->Load(full.c_str(), STGM_READ))) {
+                            wchar_t targetBuf[MAX_PATH];
+                            if (SUCCEEDED(sl->GetPath(targetBuf, MAX_PATH, nullptr, 0))) {
+                                std::wstring targetExe = targetBuf;
+                                if (!targetExe.empty()) {
+                                    if (scan_file(targetExe, sigs) || std::find(targets.begin(), targets.end(), targetExe) != targets.end()) {
+                                        isMalware = true;
+                                        if (std::find(targets.begin(), targets.end(), targetExe) == targets.end()) {
+                                            targets.push_back(targetExe);
+                                        }
+                                        if (!dryRun) {
+                                            kill_processes_by_path(targetExe);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        pf->Release();
+                    }
+                    sl->Release();
+                }
+            }
+            if (isMalware || is_known_threat_keyword(fd.cFileName)) {
+                std::wcout << L"found startup shortcut: " << fd.cFileName << L"\n";
+                if (!dryRun) {
+                    DeleteFileW(full.c_str());
+                    std::wcout << L"removed startup shortcut: " << fd.cFileName << L"\n";
+                }
+            }
+        } else if (lowerName.size() > 4 && lowerName.substr(lowerName.size() - 4) == L".exe") {
+            if (scan_file(full, sigs) || std::find(targets.begin(), targets.end(), full) != targets.end() || is_known_threat_keyword(fd.cFileName)) {
+                if (std::find(targets.begin(), targets.end(), full) == targets.end()) {
+                    targets.push_back(full);
+                }
+                std::wcout << L"found startup executable: " << fd.cFileName << L"\n";
+                if (!dryRun) {
+                    kill_processes_by_path(full);
+                }
+            }
+        }
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
 }
 
 static void scan_directory_files(const std::wstring& dir, const std::wstring& myPath,
@@ -442,7 +784,7 @@ static void scan_directory_files(const std::wstring& dir, const std::wstring& my
         std::wstring full = dir + L"\\" + fd.cFileName;
         if (_wcsicmp(full.c_str(), myPath.c_str()) == 0) continue;
 
-        if (scan_file(full, sigs)) {
+        if (scan_file(full, sigs) || is_known_threat_keyword(fd.cFileName)) {
             if (std::find(targets.begin(), targets.end(), full) == targets.end()) {
                 std::wcout << L"found: " << fd.cFileName << L"\n";
                 targets.push_back(full);
@@ -454,7 +796,8 @@ static void scan_directory_files(const std::wstring& dir, const std::wstring& my
 
 static void scan_persistence_locations(const std::wstring& myPath,
                                       const std::vector<std::vector<uint8_t>>& sigs,
-                                      std::vector<std::wstring>& targets) {
+                                      std::vector<std::wstring>& targets,
+                                      bool dryRun) {
     std::wstring myDir = myPath;
     size_t pos = myDir.find_last_of(L"\\/");
     if (pos != std::wstring::npos) {
@@ -468,11 +811,21 @@ static void scan_persistence_locations(const std::wstring& myPath,
         scan_directory_files(tp, myPath, sigs, targets);
     }
 
+    if (GetEnvironmentVariableW(L"USERPROFILE", pathBuf, MAX_PATH)) {
+        std::wstring up = pathBuf;
+        scan_directory_files(up + L"\\Desktop", myPath, sigs, targets);
+        scan_directory_files(up + L"\\Downloads", myPath, sigs, targets);
+    }
+
     if (GetEnvironmentVariableW(L"APPDATA", pathBuf, MAX_PATH)) {
-        scan_directory_files(std::wstring(pathBuf) + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, targets);
+        std::wstring appdata = pathBuf;
+        scan_and_clean_startup_dir(appdata + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, targets, dryRun);
+        scan_directory_files(appdata, myPath, sigs, targets);
     }
     if (GetEnvironmentVariableW(L"ProgramData", pathBuf, MAX_PATH)) {
-        scan_directory_files(std::wstring(pathBuf) + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, targets);
+        std::wstring pdata = pathBuf;
+        scan_and_clean_startup_dir(pdata + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, targets, dryRun);
+        scan_directory_files(pdata, myPath, sigs, targets);
     }
 
     if (GetEnvironmentVariableW(L"LOCALAPPDATA", pathBuf, MAX_PATH)) {
@@ -525,7 +878,10 @@ static bool verify_autoruns(const std::vector<std::wstring>& targets) {
     const HKEY hives[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
     const wchar_t* subkeys[] = {
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServices",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServicesOnce",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run"
     };
     const REGSAM views[] = { KEY_WOW64_64KEY, KEY_WOW64_32KEY };
 
@@ -536,7 +892,7 @@ static bool verify_autoruns(const std::vector<std::wstring>& targets) {
                 if (RegOpenKeyExW(hive, subkey, 0, KEY_READ | view, &key) == ERROR_SUCCESS) {
                     DWORD idx = 0;
                     wchar_t valName[256];
-                    std::vector<BYTE> data(2048);
+                    std::vector<BYTE> data(4096);
 
                     while (true) {
                         DWORD valLen = 256;
@@ -552,12 +908,15 @@ static bool verify_autoruns(const std::vector<std::wstring>& targets) {
                             size_t chars = dataLen / sizeof(wchar_t);
                             while (chars > 0 && ((wchar_t*)data.data())[chars - 1] == L'\0') chars--;
                             std::wstring raw((wchar_t*)data.data(), chars);
-                            std::transform(raw.begin(), raw.end(), raw.begin(), ::towlower);
+                            std::wstring exe = extract_executable_path(raw);
+
+                            if (is_known_threat_keyword(valName) || is_known_threat_keyword(raw)) {
+                                RegCloseKey(key);
+                                return false;
+                            }
 
                             for (const auto& target : targets) {
-                                std::wstring tLower = target;
-                                std::transform(tLower.begin(), tLower.end(), tLower.begin(), ::towlower);
-                                if (!tLower.empty() && raw.find(tLower) != std::wstring::npos) {
+                                if (paths_match(exe, target) || paths_match(raw, target) || paths_match(valName, target)) {
                                     RegCloseKey(key);
                                     return false;
                                 }
@@ -573,7 +932,7 @@ static bool verify_autoruns(const std::vector<std::wstring>& targets) {
     return true;
 }
 
-static bool check_tasks_active(ITaskFolder* folder, const std::vector<std::wstring>& targets) {
+static bool check_tasks_folder_has_threat(ITaskFolder* folder, const std::vector<std::wstring>& targets) {
     if (!folder) return false;
     IRegisteredTaskCollection* tasks = nullptr;
     if (SUCCEEDED(folder->GetTasks(TASK_ENUM_HIDDEN, &tasks)) && tasks) {
@@ -582,6 +941,9 @@ static bool check_tasks_active(ITaskFolder* folder, const std::vector<std::wstri
         for (LONG i = 1; i <= count; ++i) {
             IRegisteredTask* t = nullptr;
             if (FAILED(tasks->get_Item(_variant_t(i), &t)) || !t) continue;
+            BSTR name = nullptr;
+            t->get_Name(&name);
+
             ITaskDefinition* def = nullptr;
             if (SUCCEEDED(t->get_Definition(&def)) && def) {
                 IActionCollection* acts = nullptr;
@@ -598,14 +960,31 @@ static bool check_tasks_active(ITaskFolder* folder, const std::vector<std::wstri
                             if (SUCCEEDED(a->QueryInterface(IID_IExecAction, (void**)&exec)) && exec) {
                                 BSTR ep = nullptr;
                                 exec->get_Path(&ep);
-                                if (ep) {
-                                    std::wstring p = ep;
-                                    std::transform(p.begin(), p.end(), p.begin(), ::towlower);
+                                BSTR args = nullptr;
+                                exec->get_Arguments(&args);
+
+                                std::wstring fullCmd = (ep ? ep : L"");
+                                if (args) { fullCmd += L" "; fullCmd += args; }
+                                std::wstring exe = extract_executable_path(fullCmd);
+
+                                if (!exe.empty() && !is_system_trusted_binary(exe)) {
+                                    if (is_known_threat_keyword(exe) || (name && is_known_threat_keyword(name)) || is_known_threat_keyword(fullCmd)) {
+                                        if (ep) SysFreeString(ep);
+                                        if (args) SysFreeString(args);
+                                        if (name) SysFreeString(name);
+                                        exec->Release();
+                                        a->Release();
+                                        acts->Release();
+                                        def->Release();
+                                        t->Release();
+                                        tasks->Release();
+                                        return true;
+                                    }
                                     for (const auto& target : targets) {
-                                        std::wstring tl = target;
-                                        std::transform(tl.begin(), tl.end(), tl.begin(), ::towlower);
-                                        if (!tl.empty() && p.find(tl) != std::wstring::npos) {
-                                            SysFreeString(ep);
+                                        if (paths_match(exe, target) || (name && paths_match(name, target))) {
+                                            if (ep) SysFreeString(ep);
+                                            if (args) SysFreeString(args);
+                                            if (name) SysFreeString(name);
                                             exec->Release();
                                             a->Release();
                                             acts->Release();
@@ -615,8 +994,9 @@ static bool check_tasks_active(ITaskFolder* folder, const std::vector<std::wstri
                                             return true;
                                         }
                                     }
-                                    SysFreeString(ep);
                                 }
+                                if (ep) SysFreeString(ep);
+                                if (args) SysFreeString(args);
                                 exec->Release();
                             }
                         }
@@ -626,15 +1006,33 @@ static bool check_tasks_active(ITaskFolder* folder, const std::vector<std::wstri
                 }
                 def->Release();
             }
+            if (name) SysFreeString(name);
             t->Release();
         }
         tasks->Release();
+    }
+
+    ITaskFolderCollection* subFolders = nullptr;
+    if (SUCCEEDED(folder->GetFolders(0, &subFolders)) && subFolders) {
+        LONG subCount = 0;
+        subFolders->get_Count(&subCount);
+        for (LONG i = 1; i <= subCount; ++i) {
+            ITaskFolder* sub = nullptr;
+            if (SUCCEEDED(subFolders->get_Item(_variant_t(i), &sub)) && sub) {
+                if (check_tasks_folder_has_threat(sub, targets)) {
+                    sub->Release();
+                    subFolders->Release();
+                    return true;
+                }
+                sub->Release();
+            }
+        }
+        subFolders->Release();
     }
     return false;
 }
 
 static bool verify_tasks(const std::vector<std::wstring>& targets) {
-    if (targets.empty()) return true;
     com_scope com;
     if (!com.valid()) return true;
     ITaskService* svc = nullptr;
@@ -644,7 +1042,7 @@ static bool verify_tasks(const std::vector<std::wstring>& targets) {
     if (SUCCEEDED(svc->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t()))) {
         ITaskFolder* root = nullptr;
         if (SUCCEEDED(svc->GetFolder(_bstr_t(L"\\"), &root)) && root) {
-            found = check_tasks_active(root, targets);
+            found = check_tasks_folder_has_threat(root, targets);
             root->Release();
         }
     }
@@ -654,7 +1052,7 @@ static bool verify_tasks(const std::vector<std::wstring>& targets) {
 
 int wmain(int argc, wchar_t* argv[]) {
     if (!is_elevated()) {
-        std::wcout << L"[-] Warning: not running as Administrator. Some processes may be inaccessible.\n\n";
+        std::wcout << L"[-] Warning: not running as Administrator. Some processes or keys may be inaccessible.\n\n";
     }
     set_privilege(L"SeDebugPrivilege");
 
@@ -676,66 +1074,79 @@ int wmain(int argc, wchar_t* argv[]) {
 
     auto sigs = load_signatures();
 
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) {
-        std::wcerr << L"error: unable to snapshot processes\n";
-        return 1;
-    }
-
-    PROCESSENTRY32W pe{};
-    pe.dwSize = sizeof(pe);
-    DWORD selfPid = GetCurrentProcessId();
     std::vector<std::wstring> targets;
     std::vector<DWORD> killedPids;
+    DWORD selfPid = GetCurrentProcessId();
 
-    if (Process32FirstW(snap, &pe)) {
-        do {
-            if (pe.th32ProcessID <= 4 || pe.th32ProcessID == selfPid)
-                continue;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32W pe{};
+        pe.dwSize = sizeof(pe);
 
-            HANDLE proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_TERMINATE | SYNCHRONIZE,
-                                      FALSE, pe.th32ProcessID);
-            if (!proc) continue;
+        if (Process32FirstW(snap, &pe)) {
+            do {
+                if (pe.th32ProcessID <= 4 || pe.th32ProcessID == selfPid)
+                    continue;
 
-            wchar_t imgPath[MAX_PATH * 2] = {0};
-            DWORD sz = MAX_PATH * 2;
-            std::wstring path;
-            if (QueryFullProcessImageNameW(proc, 0, imgPath, &sz)) {
-                path = imgPath;
-            }
-
-            if (path.empty() || is_trusted_location(path) || _wcsicmp(path.c_str(), myPath.c_str()) == 0) {
-                CloseHandle(proc);
-                continue;
-            }
-
-            bool match = scan_file(path, sigs);
-            if (!match) {
-                match = scan_process_memory(proc, sigs);
-            }
-
-            if (match) {
-                std::wcout << L"found: " << pe.szExeFile << L" (pid " << pe.th32ProcessID << L")\n";
-
-                if (!dryRun) {
-                    kill_process_tree(pe.th32ProcessID);
-
-                    if (TerminateProcess(proc, 1)) {
-                        WaitForSingleObject(proc, 1000);
-                        std::wcout << L"killed\n";
+                std::wstring path;
+                HANDLE qproc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+                if (qproc) {
+                    wchar_t imgPath[MAX_PATH * 2] = {0};
+                    DWORD sz = MAX_PATH * 2;
+                    if (QueryFullProcessImageNameW(qproc, 0, imgPath, &sz)) {
+                        path = imgPath;
                     }
-                    killedPids.push_back(pe.th32ProcessID);
+                    CloseHandle(qproc);
                 }
-                targets.push_back(path);
-            }
-            CloseHandle(proc);
-        } while (Process32NextW(snap, &pe));
+
+                if (!path.empty() && (is_trusted_location(path) || _wcsicmp(path.c_str(), myPath.c_str()) == 0)) {
+                    continue;
+                }
+
+                bool match = false;
+                if (!path.empty()) {
+                    match = scan_file(path, sigs);
+                }
+
+                if (!match) {
+                    HANDLE vmProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pe.th32ProcessID);
+                    if (vmProc) {
+                        match = scan_process_memory(vmProc, sigs);
+                        CloseHandle(vmProc);
+                    }
+                }
+
+                if (match) {
+                    std::wcout << L"found: " << pe.szExeFile << L" (pid " << pe.th32ProcessID << L")\n";
+
+                    if (!dryRun) {
+                        suspend_process(pe.th32ProcessID);
+                        kill_process_tree(pe.th32ProcessID);
+
+                        HANDLE kproc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pe.th32ProcessID);
+                        if (kproc) {
+                            if (TerminateProcess(kproc, 1)) {
+                                WaitForSingleObject(kproc, 1000);
+                                std::wcout << L"killed\n";
+                            }
+                            CloseHandle(kproc);
+                        }
+                        killedPids.push_back(pe.th32ProcessID);
+                    }
+                    if (!path.empty() && std::find(targets.begin(), targets.end(), path) == targets.end()) {
+                        targets.push_back(path);
+                    }
+                }
+            } while (Process32NextW(snap, &pe));
+        }
+        CloseHandle(snap);
     }
-    CloseHandle(snap);
 
-    scan_persistence_locations(myPath, sigs, targets);
+    scan_persistence_locations(myPath, sigs, targets, dryRun);
+    scan_and_clean_autoruns(sigs, targets, dryRun);
+    scan_and_clean_scheduled_tasks(sigs, targets, dryRun);
 
-    if (targets.empty()) {
+    if (targets.empty() && killedPids.empty()) {
         std::wcout << L"no threats found\n";
     } else {
         size_t actualShredded = 0;
@@ -747,8 +1158,6 @@ int wmain(int argc, wchar_t* argv[]) {
                     actualShredded++;
                 }
             }
-            clean_autoruns(targets);
-            clean_scheduled_tasks(targets);
 
             std::wcout << L"\nverifying...\n";
             bool procsClean = verify_processes(killedPids);
