@@ -24,13 +24,21 @@ static const std::vector<uint8_t> SIG_STORE[] = {
     {0x37, 0x3b, 0x33, 0x34, 0x74, 0x3e, 0x3f, 0x39, 0x35, 0x3e, 0x3f, 0x1c, 0x28, 0x35, 0x37, 0x0e, 0x35, 0x34, 0x1b, 0x3e, 0x3e, 0x28, 0x3f, 0x29, 0x29}, // ton clipper (25 bytes)
     {0x37, 0x3b, 0x33, 0x34, 0x74, 0x1d, 0x3f, 0x2e, 0x1b, 0x2a, 0x2a, 0x18, 0x35, 0x2f, 0x34, 0x3e, 0x11, 0x3f, 0x23}, // appbound key (19 bytes)
     {0x37, 0x3b, 0x33, 0x34, 0x74, 0x29, 0x2e, 0x3b, 0x2e, 0x33, 0x39, 0x33, 0x34, 0x29, 0x2e, 0x3b, 0x36, 0x36}, // persistence install (18 bytes)
-    {0x38, 0x33, 0x38, 0x3b, 0x2d, 0x33, 0x34, 0x2c}, // drop tag / binary (8 bytes)
+    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x3d, 0x3f, 0x2e, 0x08, 0x3b, 0x34, 0x3e, 0x35, 0x37, 0x1c, 0x35, 0x36, 0x3e, 0x3f, 0x28, 0x29}, // getRandomFolders (21 bytes)
+    {0x37, 0x3b, 0x33, 0x34, 0x74, 0x29, 0x2f, 0x29, 0x2a, 0x3f, 0x34, 0x3e, 0x0a, 0x28, 0x35, 0x39, 0x3f, 0x29, 0x29, 0x0e, 0x32, 0x28, 0x3f, 0x3b, 0x3e, 0x29}, // suspendProcessThreads (26 bytes)
+    {0x3d, 0x33, 0x2e, 0x32, 0x2f, 0x38, 0x74, 0x39, 0x35, 0x37, 0x75, 0x39, 0x3b, 0x2a, 0x34, 0x29, 0x2a, 0x3b, 0x39, 0x3f, 0x32, 0x35, 0x35, 0x31, 0x75, 0x2e, 0x3b, 0x29, 0x31, 0x37, 0x3b, 0x29, 0x2e, 0x3f, 0x28}, // taskmaster (35 bytes)
     {0x3d, 0x33, 0x2e, 0x32, 0x2f, 0x38, 0x74, 0x39, 0x35, 0x37, 0x75, 0x22, 0x29, 0x29, 0x34, 0x33, 0x39, 0x31, 0x75, 0x2e, 0x35, 0x34, 0x2f, 0x2e, 0x33, 0x36, 0x29, 0x77, 0x3d, 0x35}, // tonutils-go (30 bytes)
     {0x3d, 0x33, 0x2e, 0x32, 0x2f, 0x38, 0x74, 0x39, 0x35, 0x37, 0x75, 0x28, 0x35, 0x3e, 0x35, 0x36, 0x3c, 0x35, 0x3b, 0x3d, 0x75, 0x3d, 0x35, 0x2d, 0x69, 0x68, 0x74, 0x19, 0x28, 0x3f, 0x3b, 0x2e, 0x3f, 0x17, 0x2f, 0x2e, 0x3f, 0x22}, // gow32.CreateMutex (38 bytes)
     {0x0f, 0x0a, 0x02, 0x7b, 0x57, 0x53, 0x54, 0x50, 0x2b, 0x52, 0x4b, 0x27}  // upx packed header (12 bytes)
 };
 
 constexpr size_t CARRY_SIZE = 128;
+
+struct ThreatRecord {
+    std::wstring fullPath;
+    std::wstring fileName;
+    std::wstring fileStem;
+};
 
 static std::vector<std::vector<uint8_t>> load_signatures() {
     std::vector<std::vector<uint8_t>> sigs;
@@ -100,50 +108,136 @@ static bool is_system_trusted_binary(const std::wstring& path) {
         p.find(L"onedrive.sync") != std::wstring::npos ||
         p.find(L"\\windows defender\\") != std::wstring::npos ||
         p.find(L"\\microsoft\\onedrive\\") != std::wstring::npos ||
-        p.find(L"\\microsoft\\edge\\") != std::wstring::npos) {
+        p.find(L"\\microsoft\\edge\\") != std::wstring::npos ||
+        p.find(L"explorer.exe") != std::wstring::npos ||
+        p.find(L"cmd.exe") != std::wstring::npos ||
+        p.find(L"powershell.exe") != std::wstring::npos ||
+        p.find(L"conhost.exe") != std::wstring::npos ||
+        p.find(L"taskhostw.exe") != std::wstring::npos ||
+        p.find(L"svchost.exe") != std::wstring::npos ||
+        p.find(L"runtimebroker.exe") != std::wstring::npos ||
+        p.find(L"sihost.exe") != std::wstring::npos ||
+        p.find(L"searchapp.exe") != std::wstring::npos ||
+        p.find(L"startmenuexperiencehost.exe") != std::wstring::npos) {
         return true;
     }
     return false;
 }
 
-static bool is_trusted_location(const std::wstring& path) {
-    if (is_system_trusted_binary(path)) return true;
+static std::wstring canonicalize_path(const std::wstring& path) {
+    if (path.empty()) return L"";
 
-    std::wstring p = to_lower(path);
+    wchar_t expanded[8192];
+    DWORD expLen = ExpandEnvironmentStringsW(path.c_str(), expanded, 8192);
+    std::wstring s = (expLen > 0 && expLen < 8192) ? expanded : path;
+
+    size_t start = s.find_first_not_of(L" \t\r\n\"");
+    if (start == std::wstring::npos) return L"";
+    size_t end = s.find_last_not_of(L" \t\r\n\"");
+    s = s.substr(start, end - start + 1);
+
+    for (auto& ch : s) {
+        if (ch == L'/') ch = L'\\';
+    }
+
+    wchar_t longPath[8192];
+    DWORD longLen = GetLongPathNameW(s.c_str(), longPath, 8192);
+    if (longLen > 0 && longLen < 8192) {
+        s = longPath;
+    }
+
+    return to_lower(s);
+}
+
+static std::wstring get_filename(const std::wstring& path) {
+    std::wstring p = canonicalize_path(path);
+    size_t pos = p.find_last_of(L"\\/");
+    return (pos != std::wstring::npos) ? p.substr(pos + 1) : p;
+}
+
+static std::wstring get_stem(const std::wstring& path) {
+    std::wstring fn = get_filename(path);
+    size_t dot = fn.find_last_of(L'.');
+    return (dot != std::wstring::npos) ? fn.substr(0, dot) : fn;
+}
+
+static bool is_matching_threat(const std::wstring& testStr, const std::vector<ThreatRecord>& threats) {
+    if (testStr.empty() || threats.empty()) return false;
+    std::wstring norm = canonicalize_path(testStr);
+    std::wstring normFn = get_filename(norm);
+    std::wstring normStem = get_stem(norm);
+    std::wstring rawLower = to_lower(testStr);
+
+    for (const auto& tr : threats) {
+        if (!tr.fullPath.empty()) {
+            if (norm == tr.fullPath) return true;
+            if (rawLower.find(tr.fullPath) != std::wstring::npos) return true;
+        }
+        if (!tr.fileName.empty() && !is_system_trusted_binary(tr.fileName)) {
+            if (normFn == tr.fileName) return true;
+            if (rawLower.find(tr.fileName) != std::wstring::npos) return true;
+        }
+        if (!tr.fileStem.empty() && !is_system_trusted_binary(tr.fileStem)) {
+            if (norm == tr.fileStem || normStem == tr.fileStem) return true;
+        }
+    }
+    return false;
+}
+
+static bool is_volatile_orphaned_entry(const std::wstring& exePath) {
+    if (exePath.empty()) return false;
+    if (GetFileAttributesW(exePath.c_str()) != INVALID_FILE_ATTRIBUTES) return false;
+
+    std::wstring p = canonicalize_path(exePath);
+    if (p.empty() || is_system_trusted_binary(p)) return false;
+
+    if (p.find(L"\\temp\\") != std::wstring::npos ||
+        p.find(L"\\appdata\\") != std::wstring::npos ||
+        p.find(L"\\desktop\\") != std::wstring::npos ||
+        p.find(L"\\downloads\\") != std::wstring::npos) {
+        return true;
+    }
 
     wchar_t buf[MAX_PATH];
-    if (GetWindowsDirectoryW(buf, MAX_PATH)) {
-        std::wstring w = to_lower(buf);
-        if (starts_with_path(p, w)) {
-            if (p.find(L"\\temp\\") == std::wstring::npos &&
-                p.find(L"\\tasks\\") == std::wstring::npos &&
-                p.find(L"\\tracing\\") == std::wstring::npos) {
+    if (GetTempPathW(MAX_PATH, buf)) {
+        std::wstring tp = canonicalize_path(buf);
+        if (starts_with_path(p, tp)) return true;
+    }
+    if (GetEnvironmentVariableW(L"APPDATA", buf, MAX_PATH)) {
+        std::wstring ap = canonicalize_path(buf);
+        if (starts_with_path(p, ap)) return true;
+    }
+    if (GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH)) {
+        std::wstring lap = canonicalize_path(buf);
+        if (starts_with_path(p, lap)) return true;
+    }
+    if (GetEnvironmentVariableW(L"USERPROFILE", buf, MAX_PATH)) {
+        std::wstring up = canonicalize_path(buf);
+        if (starts_with_path(p, up)) {
+            if (p.find(L"\\desktop\\") != std::wstring::npos ||
+                p.find(L"\\downloads\\") != std::wstring::npos) {
                 return true;
             }
         }
     }
-
-    if (GetEnvironmentVariableW(L"ProgramFiles", buf, MAX_PATH)) {
-        std::wstring pf = to_lower(buf);
-        if (starts_with_path(p, pf)) return true;
-    }
-    if (GetEnvironmentVariableW(L"ProgramFiles(x86)", buf, MAX_PATH)) {
-        std::wstring pf86 = to_lower(buf);
-        if (starts_with_path(p, pf86)) return true;
-    }
-
     return false;
 }
 
-static bool is_known_threat_keyword(const std::wstring& str) {
-    std::wstring s = to_lower(str);
-    if (s.find(L"bibawinv") != std::wstring::npos ||
-        s.find(L"salat") != std::wstring::npos ||
-        s.find(L"webrat") != std::wstring::npos ||
-        s.find(L"scriptnursultan") != std::wstring::npos) {
-        return true;
+static bool add_threat(std::vector<ThreatRecord>& threats, const std::wstring& path) {
+    if (path.empty() || is_system_trusted_binary(path)) return false;
+    std::wstring norm = canonicalize_path(path);
+    if (norm.empty()) return false;
+
+    for (const auto& tr : threats) {
+        if (tr.fullPath == norm) return false;
     }
-    return false;
+
+    ThreatRecord tr;
+    tr.fullPath = norm;
+    tr.fileName = get_filename(norm);
+    tr.fileStem = get_stem(norm);
+    threats.push_back(tr);
+    return true;
 }
 
 static std::wstring extract_executable_path(const std::wstring& cmd) {
@@ -193,22 +287,33 @@ static std::wstring extract_executable_path(const std::wstring& cmd) {
     return exePath;
 }
 
-static bool paths_match(const std::wstring& p1, const std::wstring& p2) {
-    if (p1.empty() || p2.empty()) return false;
-    if (_wcsicmp(p1.c_str(), p2.c_str()) == 0) return true;
+static std::vector<std::wstring> extract_all_executable_paths(const std::wstring& cmd) {
+    std::vector<std::wstring> results;
+    std::wstring primary = extract_executable_path(cmd);
+    if (!primary.empty()) results.push_back(primary);
 
-    std::wstring l1 = to_lower(p1);
-    std::wstring l2 = to_lower(p2);
-    if (l1.find(l2) != std::wstring::npos || l2.find(l1) != std::wstring::npos)
-        return true;
-
-    size_t pos1 = l1.find_last_of(L"\\/");
-    size_t pos2 = l2.find_last_of(L"\\/");
-    std::wstring fn1 = (pos1 != std::wstring::npos) ? l1.substr(pos1 + 1) : l1;
-    std::wstring fn2 = (pos2 != std::wstring::npos) ? l2.substr(pos2 + 1) : l2;
-    if (!fn1.empty() && fn1 == fn2) return true;
-
-    return false;
+    std::wstring lowerCmd = to_lower(cmd);
+    size_t pos = 0;
+    while ((pos = lowerCmd.find(L".exe", pos)) != std::wstring::npos) {
+        size_t pStart = lowerCmd.rfind(L'\"', pos);
+        if (pStart != std::wstring::npos && pStart < pos) {
+            std::wstring cand = cmd.substr(pStart + 1, pos + 4 - (pStart + 1));
+            std::wstring exp = extract_executable_path(cand);
+            if (!exp.empty() && std::find(results.begin(), results.end(), exp) == results.end()) {
+                results.push_back(exp);
+            }
+        } else {
+            size_t sStart = lowerCmd.rfind(L' ', pos);
+            size_t actualStart = (sStart != std::wstring::npos) ? sStart + 1 : 0;
+            std::wstring cand = cmd.substr(actualStart, pos + 4 - actualStart);
+            std::wstring exp = extract_executable_path(cand);
+            if (!exp.empty() && std::find(results.begin(), results.end(), exp) == results.end()) {
+                results.push_back(exp);
+            }
+        }
+        pos += 4;
+    }
+    return results;
 }
 
 static bool has_pattern(const uint8_t* buf, size_t bufLen, const uint8_t* pat, size_t patLen) {
@@ -358,6 +463,9 @@ static void kill_process_tree(DWORD parentPid) {
 
 static void kill_processes_by_path(const std::wstring& targetPath) {
     if (targetPath.empty() || is_system_trusted_binary(targetPath)) return;
+    std::wstring normTarget = canonicalize_path(targetPath);
+    std::wstring targetFn = get_filename(normTarget);
+
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return;
 
@@ -380,7 +488,17 @@ static void kill_processes_by_path(const std::wstring& targetPath) {
             }
             CloseHandle(proc);
 
-            if (paths_match(p, targetPath) || paths_match(pe.szExeFile, targetPath)) {
+            std::wstring normProc = canonicalize_path(p);
+            std::wstring procFn = to_lower(pe.szExeFile);
+
+            bool matches = false;
+            if (!normProc.empty() && normProc == normTarget) {
+                matches = true;
+            } else if (!targetFn.empty() && procFn == targetFn && !is_system_trusted_binary(procFn)) {
+                matches = true;
+            }
+
+            if (matches) {
                 suspend_process(pe.th32ProcessID);
                 kill_process_tree(pe.th32ProcessID);
                 HANDLE kproc = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pe.th32ProcessID);
@@ -447,13 +565,15 @@ static bool wipe_and_delete(std::wstring path) {
     return shredded;
 }
 
-static void scan_and_clean_autoruns(const std::vector<std::vector<uint8_t>>& sigs,
-                                    std::vector<std::wstring>& targets,
-                                    bool dryRun) {
+static size_t scan_and_clean_autoruns(const std::vector<std::vector<uint8_t>>& sigs,
+                                     std::vector<ThreatRecord>& threats,
+                                     bool dryRun) {
+    size_t totalRemoved = 0;
     const HKEY hives[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
     const wchar_t* subkeys[] = {
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnceEx",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServices",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServicesOnce",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run"
@@ -488,47 +608,41 @@ static void scan_and_clean_autoruns(const std::vector<std::vector<uint8_t>>& sig
                             while (chars > 0 && ((wchar_t*)data.data())[chars - 1] == L'\0') chars--;
                             std::wstring raw((wchar_t*)data.data(), chars);
 
-                            std::wstring exe = extract_executable_path(raw);
                             bool isMalware = false;
 
-                            if (!exe.empty() && !is_system_trusted_binary(exe)) {
-                                for (const auto& t : targets) {
-                                    if (paths_match(exe, t)) {
-                                        isMalware = true;
-                                        break;
-                                    }
+                            if (is_matching_threat(valName, threats)) {
+                                isMalware = true;
+                            }
+
+                            auto exes = extract_all_executable_paths(raw);
+                            for (const auto& exe : exes) {
+                                if (exe.empty() || is_system_trusted_binary(exe)) continue;
+
+                                if (is_matching_threat(exe, threats)) {
+                                    isMalware = true;
+                                    break;
                                 }
 
-                                if (!isMalware && !is_trusted_location(exe)) {
-                                    if (GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                                        if (scan_file(exe, sigs)) {
-                                            isMalware = true;
-                                            if (std::find(targets.begin(), targets.end(), exe) == targets.end()) {
-                                                targets.push_back(exe);
-                                            }
-                                            std::wcout << L"found autorun threat: " << valName << L" -> " << exe << L"\n";
-                                            if (!dryRun) {
-                                                kill_processes_by_path(exe);
-                                            }
+                                if (GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                                    if (scan_file(exe, sigs)) {
+                                        isMalware = true;
+                                        add_threat(threats, exe);
+                                        std::wcout << L"found autorun threat: " << valName << L" -> " << exe << L"\n";
+                                        if (!dryRun) {
+                                            kill_processes_by_path(exe);
                                         }
-                                    } else {
-                                        if (is_known_threat_keyword(exe) || is_known_threat_keyword(valName) || is_known_threat_keyword(raw)) {
-                                            isMalware = true;
-                                        }
+                                        break;
+                                    }
+                                } else {
+                                    if (is_volatile_orphaned_entry(exe)) {
+                                        isMalware = true;
+                                        break;
                                     }
                                 }
                             }
 
-                            if (!isMalware && !is_system_trusted_binary(valName)) {
-                                if (is_known_threat_keyword(valName) || is_known_threat_keyword(raw)) {
-                                    isMalware = true;
-                                }
-                                for (const auto& t : targets) {
-                                    if (paths_match(valName, t) || paths_match(raw, t)) {
-                                        isMalware = true;
-                                        break;
-                                    }
-                                }
+                            if (!isMalware && is_matching_threat(raw, threats)) {
+                                isMalware = true;
                             }
 
                             if (isMalware) {
@@ -542,11 +656,13 @@ static void scan_and_clean_autoruns(const std::vector<std::vector<uint8_t>>& sig
                         for (const auto& name : toDelete) {
                             if (RegDeleteValueW(key, name.c_str()) == ERROR_SUCCESS) {
                                 std::wcout << L"removed autorun: " << name << L"\n";
+                                totalRemoved++;
                             }
                         }
                     } else if (!toDelete.empty()) {
                         for (const auto& name : toDelete) {
                             std::wcout << L"[dry-run] autorun detected: " << name << L"\n";
+                            totalRemoved++;
                         }
                     }
                     RegCloseKey(key);
@@ -554,13 +670,15 @@ static void scan_and_clean_autoruns(const std::vector<std::vector<uint8_t>>& sig
             }
         }
     }
+    return totalRemoved;
 }
 
-static void scan_and_clean_tasks_folder(ITaskFolder* folder,
-                                        const std::vector<std::vector<uint8_t>>& sigs,
-                                        std::vector<std::wstring>& targets,
-                                        bool dryRun) {
-    if (!folder) return;
+static size_t scan_and_clean_tasks_folder(ITaskFolder* folder,
+                                         const std::vector<std::vector<uint8_t>>& sigs,
+                                         std::vector<ThreatRecord>& threats,
+                                         bool dryRun) {
+    if (!folder) return 0;
+    size_t totalRemoved = 0;
 
     IRegisteredTaskCollection* tasks = nullptr;
     if (SUCCEEDED(folder->GetTasks(TASK_ENUM_HIDDEN, &tasks)) && tasks) {
@@ -572,6 +690,7 @@ static void scan_and_clean_tasks_folder(ITaskFolder* folder,
 
             BSTR name = nullptr;
             t->get_Name(&name);
+            std::wstring taskName = name ? name : L"";
 
             ITaskDefinition* def = nullptr;
             if (SUCCEEDED(t->get_Definition(&def)) && def) {
@@ -580,6 +699,10 @@ static void scan_and_clean_tasks_folder(ITaskFolder* folder,
                     LONG actCount = 0;
                     acts->get_Count(&actCount);
                     bool taskMalicious = false;
+
+                    if (!taskName.empty() && is_matching_threat(taskName, threats)) {
+                        taskMalicious = true;
+                    }
 
                     for (LONG j = 1; j <= actCount && !taskMalicious; ++j) {
                         IAction* a = nullptr;
@@ -601,46 +724,35 @@ static void scan_and_clean_tasks_folder(ITaskFolder* folder,
                                     fullCmd += args;
                                 }
 
-                                std::wstring exe = extract_executable_path(fullCmd);
+                                auto exes = extract_all_executable_paths(fullCmd);
+                                for (const auto& exe : exes) {
+                                    if (exe.empty() || is_system_trusted_binary(exe)) continue;
 
-                                if (!exe.empty() && !is_system_trusted_binary(exe)) {
-                                    for (const auto& target : targets) {
-                                        if (paths_match(exe, target)) {
-                                            taskMalicious = true;
-                                            break;
-                                        }
+                                    if (is_matching_threat(exe, threats)) {
+                                        taskMalicious = true;
+                                        break;
                                     }
 
-                                    if (!taskMalicious && !is_trusted_location(exe)) {
-                                        if (GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
-                                            if (scan_file(exe, sigs)) {
-                                                taskMalicious = true;
-                                                if (std::find(targets.begin(), targets.end(), exe) == targets.end()) {
-                                                    targets.push_back(exe);
-                                                }
-                                                std::wcout << L"found scheduled task threat: " << (name ? name : L"") << L" -> " << exe << L"\n";
-                                                if (!dryRun) {
-                                                    kill_processes_by_path(exe);
-                                                }
+                                    if (GetFileAttributesW(exe.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                                        if (scan_file(exe, sigs)) {
+                                            taskMalicious = true;
+                                            add_threat(threats, exe);
+                                            std::wcout << L"found scheduled task threat: " << taskName << L" -> " << exe << L"\n";
+                                            if (!dryRun) {
+                                                kill_processes_by_path(exe);
                                             }
-                                        } else {
-                                            if (is_known_threat_keyword(exe) || (name && is_known_threat_keyword(name)) || is_known_threat_keyword(fullCmd)) {
-                                                taskMalicious = true;
-                                            }
+                                            break;
+                                        }
+                                    } else {
+                                        if (is_volatile_orphaned_entry(exe)) {
+                                            taskMalicious = true;
+                                            break;
                                         }
                                     }
                                 }
 
-                                if (!taskMalicious && name && !is_system_trusted_binary(name)) {
-                                    if (is_known_threat_keyword(name) || is_known_threat_keyword(fullCmd)) {
-                                        taskMalicious = true;
-                                    }
-                                    for (const auto& target : targets) {
-                                        if (paths_match(name, target)) {
-                                            taskMalicious = true;
-                                            break;
-                                        }
-                                    }
+                                if (!taskMalicious && is_matching_threat(fullCmd, threats)) {
+                                    taskMalicious = true;
                                 }
 
                                 if (ep) SysFreeString(ep);
@@ -655,9 +767,11 @@ static void scan_and_clean_tasks_folder(ITaskFolder* folder,
                         if (!dryRun) {
                             if (SUCCEEDED(folder->DeleteTask(name, 0))) {
                                 std::wcout << L"removed task: " << name << L"\n";
+                                totalRemoved++;
                             }
                         } else {
                             std::wcout << L"[dry-run] task detected: " << name << L"\n";
+                            totalRemoved++;
                         }
                     }
                     acts->Release();
@@ -677,43 +791,48 @@ static void scan_and_clean_tasks_folder(ITaskFolder* folder,
         for (LONG i = 1; i <= subCount; ++i) {
             ITaskFolder* sub = nullptr;
             if (SUCCEEDED(subFolders->get_Item(_variant_t(i), &sub)) && sub) {
-                scan_and_clean_tasks_folder(sub, sigs, targets, dryRun);
+                totalRemoved += scan_and_clean_tasks_folder(sub, sigs, threats, dryRun);
                 sub->Release();
             }
         }
         subFolders->Release();
     }
+    return totalRemoved;
 }
 
-static void scan_and_clean_scheduled_tasks(const std::vector<std::vector<uint8_t>>& sigs,
-                                           std::vector<std::wstring>& targets,
+static size_t scan_and_clean_scheduled_tasks(const std::vector<std::vector<uint8_t>>& sigs,
+                                           std::vector<ThreatRecord>& threats,
                                            bool dryRun) {
     com_scope com;
-    if (!com.valid()) return;
+    if (!com.valid()) return 0;
 
     ITaskService* svc = nullptr;
     if (FAILED(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER, IID_ITaskService, (void**)&svc)) || !svc)
-        return;
+        return 0;
 
+    size_t removed = 0;
     if (SUCCEEDED(svc->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t()))) {
         ITaskFolder* root = nullptr;
         if (SUCCEEDED(svc->GetFolder(_bstr_t(L"\\"), &root)) && root) {
-            scan_and_clean_tasks_folder(root, sigs, targets, dryRun);
+            removed = scan_and_clean_tasks_folder(root, sigs, threats, dryRun);
             root->Release();
         }
     }
     svc->Release();
+    return removed;
 }
 
-static void scan_and_clean_startup_dir(const std::wstring& dir,
+static size_t scan_and_clean_startup_dir(const std::wstring& dir,
                                        const std::wstring& myPath,
                                        const std::vector<std::vector<uint8_t>>& sigs,
-                                       std::vector<std::wstring>& targets,
+                                       std::vector<ThreatRecord>& threats,
                                        bool dryRun) {
+    if (dir.empty()) return 0;
     WIN32_FIND_DATAW fd;
     HANDLE hFind = FindFirstFileW((dir + L"\\*").c_str(), &fd);
-    if (hFind == INVALID_HANDLE_VALUE) return;
+    if (hFind == INVALID_HANDLE_VALUE) return 0;
 
+    size_t totalRemoved = 0;
     do {
         if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
         std::wstring full = dir + L"\\" + fd.cFileName;
@@ -734,14 +853,18 @@ static void scan_and_clean_startup_dir(const std::wstring& dir,
                             if (SUCCEEDED(sl->GetPath(targetBuf, MAX_PATH, nullptr, 0))) {
                                 std::wstring targetExe = targetBuf;
                                 if (!targetExe.empty()) {
-                                    if (scan_file(targetExe, sigs) || std::find(targets.begin(), targets.end(), targetExe) != targets.end()) {
+                                    if (is_matching_threat(targetExe, threats)) {
                                         isMalware = true;
-                                        if (std::find(targets.begin(), targets.end(), targetExe) == targets.end()) {
-                                            targets.push_back(targetExe);
+                                    } else if (GetFileAttributesW(targetExe.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                                        if (scan_file(targetExe, sigs)) {
+                                            isMalware = true;
+                                            add_threat(threats, targetExe);
+                                            if (!dryRun) {
+                                                kill_processes_by_path(targetExe);
+                                            }
                                         }
-                                        if (!dryRun) {
-                                            kill_processes_by_path(targetExe);
-                                        }
+                                    } else if (is_volatile_orphaned_entry(targetExe)) {
+                                        isMalware = true;
                                     }
                                 }
                             }
@@ -751,43 +874,100 @@ static void scan_and_clean_startup_dir(const std::wstring& dir,
                     sl->Release();
                 }
             }
-            if (isMalware || is_known_threat_keyword(fd.cFileName)) {
-                std::wcout << L"found startup shortcut: " << fd.cFileName << L"\n";
+            if (!isMalware && is_matching_threat(fd.cFileName, threats)) {
+                isMalware = true;
+            }
+
+            if (isMalware) {
                 if (!dryRun) {
                     DeleteFileW(full.c_str());
                     std::wcout << L"removed startup shortcut: " << fd.cFileName << L"\n";
+                } else {
+                    std::wcout << L"[dry-run] startup shortcut detected: " << fd.cFileName << L"\n";
                 }
+                totalRemoved++;
             }
         } else if (lowerName.size() > 4 && lowerName.substr(lowerName.size() - 4) == L".exe") {
-            if (scan_file(full, sigs) || std::find(targets.begin(), targets.end(), full) != targets.end() || is_known_threat_keyword(fd.cFileName)) {
-                if (std::find(targets.begin(), targets.end(), full) == targets.end()) {
-                    targets.push_back(full);
-                }
-                std::wcout << L"found startup executable: " << fd.cFileName << L"\n";
+            if (is_matching_threat(full, threats) || is_matching_threat(fd.cFileName, threats)) {
+                isMalware = true;
+            } else if (scan_file(full, sigs)) {
+                isMalware = true;
+                add_threat(threats, full);
+            }
+
+            if (isMalware) {
                 if (!dryRun) {
                     kill_processes_by_path(full);
+                    wipe_and_delete(full);
+                    std::wcout << L"removed startup executable: " << fd.cFileName << L"\n";
+                } else {
+                    std::wcout << L"[dry-run] startup executable detected: " << fd.cFileName << L"\n";
                 }
+                totalRemoved++;
             }
         }
     } while (FindNextFileW(hFind, &fd));
     FindClose(hFind);
+    return totalRemoved;
 }
 
-static void scan_directory_files(const std::wstring& dir, const std::wstring& myPath,
-                                 const std::vector<std::vector<uint8_t>>& sigs,
-                                 std::vector<std::wstring>& targets) {
+static size_t scan_and_clean_all_startup_dirs(const std::wstring& myPath,
+                                              const std::vector<std::vector<uint8_t>>& sigs,
+                                              std::vector<ThreatRecord>& threats,
+                                              bool dryRun) {
+    size_t removed = 0;
+    wchar_t pathBuf[MAX_PATH];
+
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_STARTUP, nullptr, 0, pathBuf))) {
+        removed += scan_and_clean_startup_dir(pathBuf, myPath, sigs, threats, dryRun);
+    }
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_COMMON_STARTUP, nullptr, 0, pathBuf))) {
+        removed += scan_and_clean_startup_dir(pathBuf, myPath, sigs, threats, dryRun);
+    }
+    if (GetEnvironmentVariableW(L"APPDATA", pathBuf, MAX_PATH)) {
+        removed += scan_and_clean_startup_dir(std::wstring(pathBuf) + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, threats, dryRun);
+    }
+    if (GetEnvironmentVariableW(L"ProgramData", pathBuf, MAX_PATH)) {
+        removed += scan_and_clean_startup_dir(std::wstring(pathBuf) + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, threats, dryRun);
+    }
+    return removed;
+}
+
+static void scan_directory_recursive(const std::wstring& dir, int maxDepth,
+                                     const std::wstring& myPath,
+                                     const std::vector<std::vector<uint8_t>>& sigs,
+                                     std::vector<ThreatRecord>& threats,
+                                     bool dryRun) {
+    if (dir.empty() || maxDepth < 0) return;
     WIN32_FIND_DATAW fd;
-    HANDLE hFind = FindFirstFileW((dir + L"\\*.exe").c_str(), &fd);
+    HANDLE hFind = FindFirstFileW((dir + L"\\*").c_str(), &fd);
     if (hFind == INVALID_HANDLE_VALUE) return;
 
     do {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
         std::wstring full = dir + L"\\" + fd.cFileName;
-        if (_wcsicmp(full.c_str(), myPath.c_str()) == 0) continue;
 
-        if (scan_file(full, sigs) || is_known_threat_keyword(fd.cFileName)) {
-            if (std::find(targets.begin(), targets.end(), full) == targets.end()) {
-                std::wcout << L"found: " << fd.cFileName << L"\n";
-                targets.push_back(full);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (_wcsicmp(fd.cFileName, L"Microsoft") == 0 ||
+                _wcsicmp(fd.cFileName, L"Google") == 0 ||
+                _wcsicmp(fd.cFileName, L"Packages") == 0 ||
+                _wcsicmp(fd.cFileName, L"WindowsApps") == 0) continue;
+
+            if (maxDepth > 0) {
+                scan_directory_recursive(full, maxDepth - 1, myPath, sigs, threats, dryRun);
+            }
+        } else {
+            if (_wcsicmp(full.c_str(), myPath.c_str()) == 0) continue;
+            std::wstring lower = to_lower(fd.cFileName);
+            if (lower.size() > 4 && lower.substr(lower.size() - 4) == L".exe") {
+                if (scan_file(full, sigs)) {
+                    if (add_threat(threats, full)) {
+                        std::wcout << L"found threat binary: " << fd.cFileName << L" (" << full << L")\n";
+                        if (!dryRun) {
+                            kill_processes_by_path(full);
+                        }
+                    }
+                }
             }
         }
     } while (FindNextFileW(hFind, &fd));
@@ -796,56 +976,121 @@ static void scan_directory_files(const std::wstring& dir, const std::wstring& my
 
 static void scan_persistence_locations(const std::wstring& myPath,
                                       const std::vector<std::vector<uint8_t>>& sigs,
-                                      std::vector<std::wstring>& targets,
+                                      std::vector<ThreatRecord>& threats,
                                       bool dryRun) {
     std::wstring myDir = myPath;
     size_t pos = myDir.find_last_of(L"\\/");
     if (pos != std::wstring::npos) {
-        scan_directory_files(myDir.substr(0, pos), myPath, sigs, targets);
+        scan_directory_recursive(myDir.substr(0, pos), 0, myPath, sigs, threats, dryRun);
     }
 
     wchar_t pathBuf[MAX_PATH];
     if (GetTempPathW(MAX_PATH, pathBuf)) {
         std::wstring tp = pathBuf;
         if (!tp.empty() && tp.back() == L'\\') tp.pop_back();
-        scan_directory_files(tp, myPath, sigs, targets);
+        scan_directory_recursive(tp, 1, myPath, sigs, threats, dryRun);
     }
 
     if (GetEnvironmentVariableW(L"USERPROFILE", pathBuf, MAX_PATH)) {
         std::wstring up = pathBuf;
-        scan_directory_files(up + L"\\Desktop", myPath, sigs, targets);
-        scan_directory_files(up + L"\\Downloads", myPath, sigs, targets);
+        scan_directory_recursive(up + L"\\Desktop", 1, myPath, sigs, threats, dryRun);
+        scan_directory_recursive(up + L"\\Downloads", 1, myPath, sigs, threats, dryRun);
     }
 
     if (GetEnvironmentVariableW(L"APPDATA", pathBuf, MAX_PATH)) {
         std::wstring appdata = pathBuf;
-        scan_and_clean_startup_dir(appdata + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, targets, dryRun);
-        scan_directory_files(appdata, myPath, sigs, targets);
+        scan_directory_recursive(appdata, 2, myPath, sigs, threats, dryRun);
     }
+
     if (GetEnvironmentVariableW(L"ProgramData", pathBuf, MAX_PATH)) {
         std::wstring pdata = pathBuf;
-        scan_and_clean_startup_dir(pdata + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup", myPath, sigs, targets, dryRun);
-        scan_directory_files(pdata, myPath, sigs, targets);
+        scan_directory_recursive(pdata, 2, myPath, sigs, threats, dryRun);
     }
 
     if (GetEnvironmentVariableW(L"LOCALAPPDATA", pathBuf, MAX_PATH)) {
         std::wstring base = pathBuf;
-        scan_directory_files(base, myPath, sigs, targets);
+        scan_directory_recursive(base, 2, myPath, sigs, threats, dryRun);
+    }
 
-        WIN32_FIND_DATAW fd;
-        HANDLE h = FindFirstFileW((base + L"\\*").c_str(), &fd);
-        if (h != INVALID_HANDLE_VALUE) {
-            do {
-                if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
-                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                    if (_wcsicmp(fd.cFileName, L"Microsoft") == 0 ||
-                        _wcsicmp(fd.cFileName, L"Google") == 0 ||
-                        _wcsicmp(fd.cFileName, L"Packages") == 0) continue;
-                    scan_directory_files(base + L"\\" + fd.cFileName, myPath, sigs, targets);
+    if (GetEnvironmentVariableW(L"ProgramFiles", pathBuf, MAX_PATH)) {
+        std::wstring pf = pathBuf;
+        scan_directory_recursive(pf, 2, myPath, sigs, threats, dryRun);
+    }
+
+    if (GetEnvironmentVariableW(L"ProgramFiles(x86)", pathBuf, MAX_PATH)) {
+        std::wstring pf86 = pathBuf;
+        scan_directory_recursive(pf86, 2, myPath, sigs, threats, dryRun);
+    }
+}
+
+static bool remediate_system_settings(bool dryRun) {
+    bool remediated = false;
+
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
+                      0, KEY_READ | (dryRun ? 0 : KEY_SET_VALUE) | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
+        DWORD enableLua = 0;
+        DWORD sz = sizeof(enableLua);
+        DWORD type = REG_DWORD;
+        if (RegQueryValueExW(hKey, L"EnableLUA", nullptr, &type, (LPBYTE)&enableLua, &sz) == ERROR_SUCCESS) {
+            if (enableLua == 0) {
+                if (!dryRun) {
+                    enableLua = 1;
+                    if (RegSetValueExW(hKey, L"EnableLUA", 0, REG_DWORD, (const BYTE*)&enableLua, sizeof(enableLua)) == ERROR_SUCCESS) {
+                        std::wcout << L"restored UAC policy (EnableLUA = 1)\n";
+                    }
+                } else {
+                    std::wcout << L"[dry-run] disabled UAC policy detected (EnableLUA = 0)\n";
                 }
-            } while (FindNextFileW(h, &fd));
-            FindClose(h);
+                remediated = true;
+            }
         }
+        RegCloseKey(hKey);
+    }
+
+    if (!dryRun) {
+        std::vector<std::wstring> tempPaths;
+        wchar_t tempBuf[MAX_PATH];
+        if (GetTempPathW(MAX_PATH, tempBuf)) {
+            std::wstring tp = tempBuf;
+            if (!tp.empty() && tp.back() != L'\\') tp += L'\\';
+            tempPaths.push_back(tp);
+        }
+        if (GetEnvironmentVariableW(L"LOCALAPPDATA", tempBuf, MAX_PATH)) {
+            tempPaths.push_back(std::wstring(tempBuf) + L"\\Temp\\");
+        }
+        if (GetEnvironmentVariableW(L"USERPROFILE", tempBuf, MAX_PATH)) {
+            tempPaths.push_back(std::wstring(tempBuf) + L"\\AppData\\Local\\Temp\\");
+        }
+        tempPaths.push_back(L"C:\\Windows\\Temp\\");
+
+        const wchar_t* auxFiles[] = { L"7z.dll", L"7z.exe", L"MSTSCLib.dll", L"AxMSTSCLib.dll", L"ffmpeg.exe" };
+        for (const auto& tp : tempPaths) {
+            for (const auto* af : auxFiles) {
+                std::wstring fp = tp + af;
+                if (GetFileAttributesW(fp.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    DeleteFileW(fp.c_str());
+                    remediated = true;
+                }
+            }
+        }
+    }
+
+    return remediated;
+}
+
+static void restore_recovery_environment() {
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    wchar_t cmd[] = L"reagentc.exe /enable";
+    if (CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+        WaitForSingleObject(pi.hProcess, 5000);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        std::wcout << L"restored Windows Recovery Environment (reagentc /enable)\n";
     }
 }
 
@@ -865,20 +1110,21 @@ static bool verify_processes(const std::vector<DWORD>& killedPids) {
     return true;
 }
 
-static bool verify_disk(const std::vector<std::wstring>& targets) {
-    for (const auto& t : targets) {
-        if (GetFileAttributesW(t.c_str()) != INVALID_FILE_ATTRIBUTES) {
+static bool verify_disk(const std::vector<ThreatRecord>& threats) {
+    for (const auto& tr : threats) {
+        if (!tr.fullPath.empty() && GetFileAttributesW(tr.fullPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
             return false;
         }
     }
     return true;
 }
 
-static bool verify_autoruns(const std::vector<std::wstring>& targets) {
+static bool verify_autoruns(const std::vector<ThreatRecord>& threats) {
     const HKEY hives[] = { HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE };
     const wchar_t* subkeys[] = {
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnceEx",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServices",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\RunServicesOnce",
         L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run"
@@ -908,15 +1154,14 @@ static bool verify_autoruns(const std::vector<std::wstring>& targets) {
                             size_t chars = dataLen / sizeof(wchar_t);
                             while (chars > 0 && ((wchar_t*)data.data())[chars - 1] == L'\0') chars--;
                             std::wstring raw((wchar_t*)data.data(), chars);
-                            std::wstring exe = extract_executable_path(raw);
 
-                            if (is_known_threat_keyword(valName) || is_known_threat_keyword(raw)) {
+                            if (is_matching_threat(valName, threats) || is_matching_threat(raw, threats)) {
                                 RegCloseKey(key);
                                 return false;
                             }
-
-                            for (const auto& target : targets) {
-                                if (paths_match(exe, target) || paths_match(raw, target) || paths_match(valName, target)) {
+                            auto exes = extract_all_executable_paths(raw);
+                            for (const auto& exe : exes) {
+                                if (is_matching_threat(exe, threats)) {
                                     RegCloseKey(key);
                                     return false;
                                 }
@@ -932,7 +1177,7 @@ static bool verify_autoruns(const std::vector<std::wstring>& targets) {
     return true;
 }
 
-static bool check_tasks_folder_has_threat(ITaskFolder* folder, const std::vector<std::wstring>& targets) {
+static bool check_tasks_folder_has_threat(ITaskFolder* folder, const std::vector<ThreatRecord>& threats) {
     if (!folder) return false;
     IRegisteredTaskCollection* tasks = nullptr;
     if (SUCCEEDED(folder->GetTasks(TASK_ENUM_HIDDEN, &tasks)) && tasks) {
@@ -943,6 +1188,14 @@ static bool check_tasks_folder_has_threat(ITaskFolder* folder, const std::vector
             if (FAILED(tasks->get_Item(_variant_t(i), &t)) || !t) continue;
             BSTR name = nullptr;
             t->get_Name(&name);
+            std::wstring taskName = name ? name : L"";
+
+            if (!taskName.empty() && is_matching_threat(taskName, threats)) {
+                if (name) SysFreeString(name);
+                t->Release();
+                tasks->Release();
+                return true;
+            }
 
             ITaskDefinition* def = nullptr;
             if (SUCCEEDED(t->get_Definition(&def)) && def) {
@@ -965,36 +1218,36 @@ static bool check_tasks_folder_has_threat(ITaskFolder* folder, const std::vector
 
                                 std::wstring fullCmd = (ep ? ep : L"");
                                 if (args) { fullCmd += L" "; fullCmd += args; }
-                                std::wstring exe = extract_executable_path(fullCmd);
 
-                                if (!exe.empty() && !is_system_trusted_binary(exe)) {
-                                    if (is_known_threat_keyword(exe) || (name && is_known_threat_keyword(name)) || is_known_threat_keyword(fullCmd)) {
+                                if (is_matching_threat(fullCmd, threats)) {
+                                    if (ep) SysFreeString(ep);
+                                    if (args) SysFreeString(args);
+                                    exec->Release();
+                                    a->Release();
+                                    acts->Release();
+                                    def->Release();
+                                    if (name) SysFreeString(name);
+                                    t->Release();
+                                    tasks->Release();
+                                    return true;
+                                }
+
+                                auto exes = extract_all_executable_paths(fullCmd);
+                                for (const auto& exe : exes) {
+                                    if (is_matching_threat(exe, threats)) {
                                         if (ep) SysFreeString(ep);
                                         if (args) SysFreeString(args);
-                                        if (name) SysFreeString(name);
                                         exec->Release();
                                         a->Release();
                                         acts->Release();
                                         def->Release();
+                                        if (name) SysFreeString(name);
                                         t->Release();
                                         tasks->Release();
                                         return true;
                                     }
-                                    for (const auto& target : targets) {
-                                        if (paths_match(exe, target) || (name && paths_match(name, target))) {
-                                            if (ep) SysFreeString(ep);
-                                            if (args) SysFreeString(args);
-                                            if (name) SysFreeString(name);
-                                            exec->Release();
-                                            a->Release();
-                                            acts->Release();
-                                            def->Release();
-                                            t->Release();
-                                            tasks->Release();
-                                            return true;
-                                        }
-                                    }
                                 }
+
                                 if (ep) SysFreeString(ep);
                                 if (args) SysFreeString(args);
                                 exec->Release();
@@ -1019,7 +1272,7 @@ static bool check_tasks_folder_has_threat(ITaskFolder* folder, const std::vector
         for (LONG i = 1; i <= subCount; ++i) {
             ITaskFolder* sub = nullptr;
             if (SUCCEEDED(subFolders->get_Item(_variant_t(i), &sub)) && sub) {
-                if (check_tasks_folder_has_threat(sub, targets)) {
+                if (check_tasks_folder_has_threat(sub, threats)) {
                     sub->Release();
                     subFolders->Release();
                     return true;
@@ -1032,7 +1285,7 @@ static bool check_tasks_folder_has_threat(ITaskFolder* folder, const std::vector
     return false;
 }
 
-static bool verify_tasks(const std::vector<std::wstring>& targets) {
+static bool verify_tasks(const std::vector<ThreatRecord>& threats) {
     com_scope com;
     if (!com.valid()) return true;
     ITaskService* svc = nullptr;
@@ -1042,7 +1295,7 @@ static bool verify_tasks(const std::vector<std::wstring>& targets) {
     if (SUCCEEDED(svc->Connect(_variant_t(), _variant_t(), _variant_t(), _variant_t()))) {
         ITaskFolder* root = nullptr;
         if (SUCCEEDED(svc->GetFolder(_bstr_t(L"\\"), &root)) && root) {
-            found = check_tasks_folder_has_threat(root, targets);
+            found = check_tasks_folder_has_threat(root, threats);
             root->Release();
         }
     }
@@ -1074,7 +1327,7 @@ int wmain(int argc, wchar_t* argv[]) {
 
     auto sigs = load_signatures();
 
-    std::vector<std::wstring> targets;
+    std::vector<ThreatRecord> threats;
     std::vector<DWORD> killedPids;
     DWORD selfPid = GetCurrentProcessId();
 
@@ -1099,7 +1352,7 @@ int wmain(int argc, wchar_t* argv[]) {
                     CloseHandle(qproc);
                 }
 
-                if (!path.empty() && (is_trusted_location(path) || _wcsicmp(path.c_str(), myPath.c_str()) == 0)) {
+                if (!path.empty() && (is_system_trusted_binary(path) || _wcsicmp(path.c_str(), myPath.c_str()) == 0)) {
                     continue;
                 }
 
@@ -1133,8 +1386,8 @@ int wmain(int argc, wchar_t* argv[]) {
                         }
                         killedPids.push_back(pe.th32ProcessID);
                     }
-                    if (!path.empty() && std::find(targets.begin(), targets.end(), path) == targets.end()) {
-                        targets.push_back(path);
+                    if (!path.empty()) {
+                        add_threat(threats, path);
                     }
                 }
             } while (Process32NextW(snap, &pe));
@@ -1142,39 +1395,54 @@ int wmain(int argc, wchar_t* argv[]) {
         CloseHandle(snap);
     }
 
-    scan_persistence_locations(myPath, sigs, targets, dryRun);
-    scan_and_clean_autoruns(sigs, targets, dryRun);
-    scan_and_clean_scheduled_tasks(sigs, targets, dryRun);
+    scan_persistence_locations(myPath, sigs, threats, dryRun);
+    size_t autorunsCleaned = scan_and_clean_autoruns(sigs, threats, dryRun);
+    size_t tasksCleaned = scan_and_clean_scheduled_tasks(sigs, threats, dryRun);
+    size_t shortcutsCleaned = scan_and_clean_all_startup_dirs(myPath, sigs, threats, dryRun);
 
-    if (targets.empty() && killedPids.empty()) {
+    bool sysRemediated = false;
+    if (!dryRun) {
+        sysRemediated = remediate_system_settings(dryRun);
+    }
+
+    size_t totalThreats = threats.size() + killedPids.size() + autorunsCleaned + tasksCleaned + shortcutsCleaned + (sysRemediated ? 1 : 0);
+
+    if (totalThreats == 0) {
         std::wcout << L"no threats found\n";
     } else {
         size_t actualShredded = 0;
         if (!dryRun) {
             std::wcout << L"\ncleaning persistence...\n";
-            for (const auto& target : targets) {
-                if (wipe_and_delete(target)) {
-                    std::wcout << L"shredded: " << target << L"\n";
+            for (const auto& tr : threats) {
+                if (wipe_and_delete(tr.fullPath)) {
+                    std::wcout << L"shredded: " << tr.fullPath << L"\n";
                     actualShredded++;
                 }
             }
+
+            // Pass 2: multi-pass verification to eliminate race conditions
+            scan_and_clean_autoruns(sigs, threats, dryRun);
+            scan_and_clean_scheduled_tasks(sigs, threats, dryRun);
+            scan_and_clean_all_startup_dirs(myPath, sigs, threats, dryRun);
+            remediate_system_settings(dryRun);
+            restore_recovery_environment();
 
             std::wcout << L"\nverifying...\n";
             bool procsClean = verify_processes(killedPids);
             std::wcout << L"processes: " << (procsClean ? L"clean" : L"threats still active") << L"\n";
 
-            bool diskClean = verify_disk(targets);
+            bool diskClean = verify_disk(threats);
             std::wcout << L"disk artifacts: " << (diskClean ? L"clean" : L"pending reboot cleanup") << L"\n";
 
-            bool autorunClean = verify_autoruns(targets);
+            bool autorunClean = verify_autoruns(threats);
             std::wcout << L"autorun: " << (autorunClean ? L"clean" : L"threats still registered") << L"\n";
 
-            bool tasksClean = verify_tasks(targets);
+            bool tasksClean = verify_tasks(threats);
             std::wcout << L"scheduled tasks: " << (tasksClean ? L"clean" : L"threats still registered") << L"\n";
 
             std::wcout << L"\ndone (" << actualShredded << L" shredded, " << killedPids.size() << L" processes killed)\n";
         } else {
-            std::wcout << L"\n[scan results: " << targets.size() << L" threats detected]\n";
+            std::wcout << L"\n[scan results: " << totalThreats << L" threats detected]\n";
         }
     }
 
