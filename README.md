@@ -7,10 +7,10 @@
 <a name="english"></a>
 ## English
 
-**WebratRemovalTool** (`webrat_killer`) is a standalone, single-file incident response and malware eradication utility written in C++17 for Windows. It is specifically engineered to detect, terminate, shred, and completely eradicate **WebRAT** (Go-based info-stealer and crypto-clipper).
+**WebratRemovalTool** is a standalone, single-file incident response and malware eradication utility written in C++17 for Windows. It is specifically engineered to detect, terminate, shred, and completely eradicate **WebRAT** (Go-based info-stealer and crypto-clipper).
 
 ### 📥 Download Pre-Compiled Binary
-* **Direct Binary (Git Tree):** [`bin/webrat_killer.exe`](https://github.com/KillMalware/WebratRemovalTool/raw/main/bin/webrat_killer.exe)
+* **Direct Binary (Git Tree):** [`bin/WebratRemovalTool.exe`](https://github.com/KillMalware/WebratRemovalTool/raw/main/bin/WebratRemovalTool.exe)
 * **GitHub Releases:** [Download Latest Release v1.0.0](https://github.com/KillMalware/WebratRemovalTool/releases/latest)
 
 ### Threat Profile (WebRAT)
@@ -66,7 +66,7 @@ x86_64-w64-mingw32-windres res.rc -O coff -o res.o
 # 2. Build static standalone executable:
 x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o \
   -ladvapi32 -lshell32 -lole32 -loleaut32 -municode -static \
-  -o webrat_killer.exe
+  -o WebratRemovalTool.exe
 ```
 
 ---
@@ -77,14 +77,14 @@ Run as **Administrator**:
 
 ```cmd
 :: Standard interactive scan & cleanup (holds console on completion):
-webrat_killer.exe
+WebratRemovalTool.exe
 
 :: Scan only / Dry-Run (displays detections without modifying system):
-webrat_killer.exe -s
-webrat_killer.exe --scan
+WebratRemovalTool.exe -s
+WebratRemovalTool.exe --scan
 
 :: Batch automation mode (exits without prompt upon completion):
-webrat_killer.exe -b
+WebratRemovalTool.exe -b
 ```
 
 ---
@@ -92,10 +92,10 @@ webrat_killer.exe -b
 <a name="russian"></a>
 ## Русский
 
-**WebratRemovalTool** (`webrat_killer`) — это автономная утилита для реагирования на инциденты (Incident Response) и полного удаления вредоносного ПО, написанная на C++17 под Windows. Специально разработана для обнаружения, нейтрализации, уничтожения и вычищения **WebRAT** (Go-стилер и крипто-клиппер).
+**WebratRemovalTool** — это автономная утилита для реагирования на инциденты (Incident Response) и полного удаления вредоносного ПО, написанная на C++17 под Windows. Специально разработана для обнаружения, нейтрализации, уничтожения и вычищения **WebRAT** (Go-стилер и крипто-клиппер).
 
 ### 📥 Скачать готовый бинарник
-* **Прямая ссылка (из репозитория):** [`bin/webrat_killer.exe`](https://github.com/KillMalware/WebratRemovalTool/raw/main/bin/webrat_killer.exe)
+* **Прямая ссылка (из репозитория):** [`bin/WebratRemovalTool.exe`](https://github.com/KillMalware/WebratRemovalTool/raw/main/bin/WebratRemovalTool.exe)
 * **Релизы на GitHub:** [Скачать последний релиз v1.0.0](https://github.com/KillMalware/WebratRemovalTool/releases/latest)
 
 ### Профиль угрозы (WebRAT)
@@ -147,7 +147,7 @@ x86_64-w64-mingw32-windres res.rc -O coff -o res.o
 # 2. Сборка статического бинарника:
 x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o \
   -ladvapi32 -lshell32 -lole32 -loleaut32 -municode -static \
-  -o webrat_killer.exe
+  -o WebratRemovalTool.exe
 ```
 
 ---
@@ -158,14 +158,14 @@ x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o \
 
 ```cmd
 :: Обычный интерактивный режим (сканирование, удаление, ожидание нажатия клавиши):
-webrat_killer.exe
+WebratRemovalTool.exe
 
 :: Только сканирование без изменений (Dry-run):
-webrat_killer.exe -s
-webrat_killer.exe --scan
+WebratRemovalTool.exe -s
+WebratRemovalTool.exe --scan
 
 :: Пакетный режим для автоматизации (без ожидания клавиши при выходе):
-webrat_killer.exe -b
+WebratRemovalTool.exe -b
 ```
 
 ---

@@ -1064,7 +1064,7 @@ int wmain(int argc, wchar_t* argv[]) {
         if (arg == L"-s" || arg == L"--scan" || arg == L"-n" || arg == L"--dry-run") dryRun = true;
     }
 
-    std::wcout << L"webrat killer\n\n";
+    std::wcout << L"WebratRemovalTool\n\n";
     if (dryRun) std::wcout << L"[mode: scan only]\n";
     std::wcout << L"scanning...\n";
 

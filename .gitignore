@@ -6,7 +6,7 @@
 
 # Allow pre-compiled release binary
 !bin/
-!bin/webrat_killer.exe
+!bin/WebratRemovalTool.exe
 
 # Test samples & temporary files
 script*
