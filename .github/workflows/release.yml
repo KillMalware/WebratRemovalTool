@@ -25,7 +25,7 @@ jobs:
       - name: Build WebratRemovalTool.exe
         run: |
           x86_64-w64-mingw32-windres res.rc -O coff -o res.o
-          x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o -ladvapi32 -lshell32 -lole32 -loleaut32 -luuid -municode -static -s -o WebratRemovalTool.exe
+          x86_64-w64-mingw32-g++ -Wall -Wextra -std=c++17 -O2 main.cpp res.o -ladvapi32 -lshell32 -lole32 -loleaut32 -luuid -ltaskschd -municode -static -s -o WebratRemovalTool.exe
           sha256sum WebratRemovalTool.exe > sha256.txt
           cat sha256.txt
 
